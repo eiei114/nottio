@@ -6,6 +6,8 @@ shapes, connect them with arrows, and it saves itself.
 Built on [GPUI](https://gpui.rs) (the UI framework behind Zed) via
 [gpui-whiteboard](https://crates.io/crates/gpui-whiteboard).
 
+<img src="assets/nottio.png" alt="nottio sticky-note and arrow icon" width="128">
+
 ## Status
 
 Local Windows prototype. Interaction regressions run through GPUI's rendered
@@ -77,6 +79,12 @@ cargo build --release
 Requirements are the same as Zed's: a stable Rust toolchain with the
 `x86_64-pc-windows-msvc` target, Visual Studio Build Tools with the C++ desktop
 workload, and the Windows SDK. No CMake is needed.
+
+Windows builds embed the generated app icon in the executable, so Explorer,
+the native title bar and taskbar use the same identity. The ICO contains ten
+resolutions from 16px to 256px. No runtime image path is needed for the app icon.
+To regenerate assets: `python scripts/generate-icon.py` (requires Pillow).
+To check the built resource: `powershell -File scripts/verify-app-icon.ps1`.
 
 ## Keyboard
 

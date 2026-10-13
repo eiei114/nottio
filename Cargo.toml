@@ -22,6 +22,9 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 [dev-dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.9", features = ["test-support"] }
 
+[build-dependencies]
+embed-resource = "=3.0.12"
+
 [workspace]
 members = ["vendor/gpui-whiteboard"]
 default-members = [".", "vendor/gpui-whiteboard"]

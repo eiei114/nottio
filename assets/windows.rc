@@ -1,0 +1,2 @@
+// Resource ID 1 is required by gpui-pre-windows's native load_icon().
+1 ICON "assets/nottio.ico"

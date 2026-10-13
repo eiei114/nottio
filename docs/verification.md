@@ -97,3 +97,19 @@ board remained unchanged. This cropped artifact contains only generated fixtures
 The deterministic interaction tests use GPUI's test platform. They do not
 certify physical mouse automation, every IME composition flow, accessibility,
 stress performance, collaboration or full production readiness.
+
+## Generated Windows application icon
+
+`python scripts/generate-icon.py` validates the ICO directory and all ten image
+resolutions (16, 20, 24, 32, 40, 48, 64, 96, 128 and 256px). Small-size previews
+were visually checked. The full 92-test suite, Clippy with warnings denied,
+format checks and optimized Windows build passed with the icon resource linked.
+
+`powershell -File scripts/verify-app-icon.ps1 -AppPid <running-pid>` verified
+RT_GROUP_ICON **#1**, its ten resolutions, both shell-extracted icon sizes and
+the running GPUI window class's non-null application HICON. The extracted shell
+icon visibly matches the generated yellow note / turquoise arrow artwork.
+This uses read-only Win32 inspection, not Explorer cache manipulation or runtime
+icon injection. The app restarted using the same data directory; the active
+nine-object board and separate standard eight-object board were byte-identical
+to their saved backups after restart.

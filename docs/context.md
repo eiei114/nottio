@@ -95,3 +95,14 @@ file access. 32 MiB input/output, 8192px sides and 16M pixels bound each image.
 Raster normalization uses the first frame, not animation. No image file-picker,
 Explorer path paste or SVG import is wired. Images travel with board export and
 selection copy; many images therefore increase JSON and undo-snapshot sizes.
+
+## Windows application identity
+
+`assets/nottio-icon-source.png` is the generated sticky-note/orthogonal-arrow
+artwork. `scripts/generate-icon.py` derives a cleaned 1024px PNG and a ten-size
+16–256px ICO; these outputs are committed, so Pillow is not a build dependency.
+`build.rs` uses pinned `embed-resource` to link `assets/windows.rc` into the
+Windows `nottio` executable. ICON group ID **1** matches GPUI Windows' native
+`load_icon()`/window-class registration, covering shell, title-bar and taskbar
+identity without a runtime path or a patched framework. Resource compilation
+fails closed; non-Windows targets skip it. Existing board data is unrelated.
