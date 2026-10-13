@@ -37,6 +37,13 @@ class IconAssetsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             generator.master_from_source(Image.new("RGBA", (100, 100)))
 
+    def test_mac_icon_retains_the_same_master_and_transparency(self):
+        with Image.open(ROOT / "assets/nottio.icns") as icon:
+            self.assertEqual(icon.size, (1024, 1024))
+            icon.load()
+            with Image.open(ROOT / "assets/nottio.png") as master:
+                self.assertEqual(icon.convert("RGBA").tobytes(), master.tobytes())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,7 +2,7 @@
 name = "nottio"
 version = "0.1.0"
 edition = "2021"
-description = "FigJam-like sticky board for Windows: paste notes, draw shapes, connect them with arrows."
+description = "FigJam-like sticky board for Windows and macOS: paste notes, draw shapes, connect them with arrows."
 publish = false
 
 [dependencies]
@@ -18,6 +18,11 @@ gpui-whiteboard = { path = "vendor/gpui-whiteboard" }
 serde_json = "1"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "webp", "tiff", "ico", "pnm"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Compile the embedded Metal source on launch. Builds need the Apple SDK, not
+# the separate Xcode Metal compiler/toolchain. Keep the same pinned GPUI graph.
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", features = ["runtime_shaders"] }
 
 [dev-dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.9", features = ["test-support"] }

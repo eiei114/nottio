@@ -9,7 +9,7 @@
 //! Persistence is split deliberately:
 //!
 //! - the board's `on_change` hook debounces a write of the scene to
-//!   `%APPDATA%/nottio/board.json`, so ordinary editing needs no user action;
+//!   the platform's app-data folder, so ordinary editing needs no user action;
 //! - **File ▸ Save a copy…** writes the same JSON wherever the user asks, via a
 //!   native save dialog, and leaves the working board alone;
 //! - **File ▸ Open board…** adopts another file as the working board.
@@ -22,8 +22,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    actions, prelude::*, px, App, Bounds, ClipboardItem, Context, Entity, Global, Menu, MenuItem,
-    PathPromptOptions, Render, Window, WindowBounds, WindowOptions,
+    actions, prelude::*, px, App, Bounds, ClipboardItem, Context, Entity, Global, KeyBinding, Menu,
+    MenuItem, PathPromptOptions, Render, Window, WindowBounds, WindowOptions,
 };
 use gpui_whiteboard::{Scene, WhiteboardView};
 
@@ -47,7 +47,8 @@ actions!(
         Redo,
         ZoomIn,
         ZoomOut,
-        ResetView
+        ResetView,
+        Quit
     ]
 );
 
@@ -65,6 +66,8 @@ pub(crate) struct NearApp {
     status: Status,
     theme: ThemeHandle,
     window: Option<gpui::AnyWindowHandle>,
+    // Snapshot without re-entering a window already handling a native action.
+    board: Option<gpui::WeakEntity<WhiteboardView>>,
 }
 
 impl Global for NearApp {}
@@ -144,10 +147,7 @@ pub(crate) fn notify_root(cx: &mut App) {
 }
 
 fn board_of(cx: &App) -> Option<Entity<WhiteboardView>> {
-    let window = cx.global::<NearApp>().window?;
-    window
-        .read::<RootView, _, _>(cx, |root, cx| root.read(cx).board.clone())
-        .ok()
+    cx.global::<NearApp>().board.as_ref()?.upgrade()
 }
 
 /// Run a board method that needs `&mut Window` (undo, redo, paste).
@@ -284,7 +284,11 @@ fn build_board(
 // ---------------------------------------------------------------------------
 
 fn set_menus(cx: &mut App) {
-    cx.set_menus([
+    let mut menus = Vec::new();
+    if cfg!(target_os = "macos") {
+        menus.push(Menu::new("nottio").items([MenuItem::action("Quit nottio", Quit)]));
+    }
+    menus.extend([
         Menu::new("File").items([
             MenuItem::action("Open board…", OpenBoard),
             MenuItem::action("Save a copy…", SaveCopy),
@@ -301,6 +305,43 @@ fn set_menus(cx: &mut App) {
             MenuItem::action("Toggle theme", ToggleTheme),
         ]),
     ]);
+    cx.set_menus(menus);
+    let modifier = if cfg!(target_os = "macos") {
+        "cmd"
+    } else {
+        "ctrl"
+    };
+    cx.bind_keys([
+        KeyBinding::new(&format!("{modifier}-o"), OpenBoard, None),
+        KeyBinding::new(&format!("{modifier}-shift-s"), SaveCopy, None),
+    ]);
+    // The board consumes undo/redo itself, including while editing text. A
+    // global binding would intercept those keys before its raw-key handler.
+    if cfg!(target_os = "macos") {
+        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+    }
+}
+
+fn flush_working_board(cx: &App) -> std::io::Result<()> {
+    if let Some(board) = board_of(cx) {
+        storage::write_board(
+            &cx.global::<NearApp>().board_path,
+            &board.read(cx).scene().to_json(),
+        )?;
+    }
+    Ok(())
+}
+
+fn quit(_: &Quit, cx: &mut App) {
+    // Cmd+Q does not necessarily close each NSWindow first. Never rely on the
+    // window-close hook or debounce to persist the last edit on app-level quit.
+    match flush_working_board(cx) {
+        Ok(()) => cx.quit(),
+        Err(error) => {
+            cx.global_mut::<NearApp>().status = Status::Failed(error.to_string());
+            notify_root(cx);
+        }
+    }
 }
 
 fn toggle_theme(_: &ToggleTheme, cx: &mut App) {
@@ -393,6 +434,7 @@ fn open_board(_: &OpenBoard, cx: &mut App) {
             let theme = cx.global::<NearApp>().theme.clone();
             let ui = cx.global::<NearApp>().ui.clone();
             let board = cx.new(|cx| build_board(scene, theme, &ui, cx));
+            cx.global_mut::<NearApp>().board = Some(board.downgrade());
             cx.global_mut::<NearApp>().status = Status::Wrote(path.clone());
 
             with_root(cx, |root, cx| {
@@ -451,6 +493,16 @@ pub(crate) fn main() {
         cx.on_action(zoom_in);
         cx.on_action(zoom_out);
         cx.on_action(reset_view);
+        cx.on_action(quit);
+        cx.on_app_quit(|cx| {
+            // Also covers native Dock/system quit. This late hook cannot veto
+            // shutdown, whereas our Quit action above can report a write error.
+            if let Err(error) = flush_working_board(cx) {
+                eprintln!("Could not save nottio board on quit: {error}");
+            }
+            async {}
+        })
+        .detach();
         set_menus(cx);
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
@@ -469,6 +521,7 @@ pub(crate) fn main() {
             status: Status::Empty,
             theme: theme.clone(),
             window: None,
+            board: None,
         });
 
         let bounds = Bounds::centered(None, gpui::size(px(1280.), px(840.)), cx);
@@ -483,6 +536,7 @@ pub(crate) fn main() {
                 cx.global_mut::<NearApp>().window = Some(handle);
                 let root = cx.new(|cx| {
                     let board = cx.new(|cx| build_board(scene, theme.clone(), &ui, cx));
+                    cx.global_mut::<NearApp>().board = Some(board.downgrade());
                     RootView {
                         board,
                         theme: theme.clone(),
@@ -524,10 +578,24 @@ mod tests {
     fn ctrl_v_pastes_a_real_clipboard_image_moves_copies_undoes_and_reopens(
         cx: &mut TestAppContext,
     ) {
-        let dir = std::env::temp_dir().join(format!("nottio-image-ui-{}", std::process::id()));
+        clipboard_round_trip(cx, "ctrl");
+    }
+
+    #[gpui::test]
+    fn command_v_pastes_images_and_command_shortcuts_preserve_the_board(cx: &mut TestAppContext) {
+        clipboard_round_trip(cx, "cmd");
+    }
+
+    fn clipboard_round_trip(cx: &mut TestAppContext, modifier: &str) {
+        let dir =
+            std::env::temp_dir().join(format!("nottio-image-ui-{modifier}-{}", std::process::id()));
         let path = dir.join("board.json");
         let theme = ThemeHandle::new(ThemeKind::Light);
         let window = cx.update(|cx| {
+            // Exercise actual host bindings too, not just the board's raw keys.
+            cx.on_action(undo);
+            cx.on_action(redo);
+            set_menus(cx);
             cx.set_global(NearApp {
                 board_path: path.clone(),
                 ui_state_path: dir.join("ui-state.json"),
@@ -535,12 +603,14 @@ mod tests {
                 status: Status::Empty,
                 theme: theme.clone(),
                 window: None,
+                board: None,
             });
             let window = cx
                 .open_window(Default::default(), |_, cx| {
                     let board = cx.new(|cx| {
                         build_board(Scene::default(), theme.clone(), &UiState::default(), cx)
                     });
+                    cx.global_mut::<NearApp>().board = Some(board.downgrade());
                     cx.new(|_| RootView {
                         board,
                         theme: theme.clone(),
@@ -567,7 +637,7 @@ mod tests {
         let focus = point(px(400.0), px(350.0));
         cx.simulate_mouse_down(focus, MouseButton::Left, Default::default());
         cx.simulate_mouse_up(focus, MouseButton::Left, Default::default());
-        cx.simulate_keystrokes("ctrl-v");
+        cx.simulate_keystrokes(&format!("{modifier}-v"));
         cx.run_until_parked();
         let original = board.read_with(&cx, |board, _| {
             assert_eq!(board.scene().elements.len(), 1);
@@ -592,7 +662,7 @@ mod tests {
             assert!((image.x - original.x - 70.0).abs() < 0.01);
             assert!((image.y - original.y - 40.0).abs() < 0.01);
         });
-        cx.simulate_keystrokes("ctrl-z");
+        cx.simulate_keystrokes(&format!("{modifier}-z"));
         board.read_with(&cx, |board, _| {
             let ElementKind::Image(image) = &board.scene().elements[0].kind else {
                 panic!()
@@ -617,13 +687,13 @@ mod tests {
             assert_eq!((image.w, image.h), (360.0, 140.0));
             assert_eq!(image.src, original.src);
         });
-        cx.simulate_keystrokes("ctrl-z");
-        cx.simulate_keystrokes("ctrl-z");
+        cx.simulate_keystrokes(&format!("{modifier}-z"));
+        cx.simulate_keystrokes(&format!("{modifier}-z"));
         board.read_with(&cx, |board, _| assert!(board.scene().elements.is_empty()));
-        cx.simulate_keystrokes("ctrl-shift-z");
+        cx.simulate_keystrokes(&format!("{modifier}-shift-z"));
         cx.simulate_mouse_down(from, MouseButton::Left, Default::default());
         cx.simulate_mouse_up(from, MouseButton::Left, Default::default());
-        cx.simulate_keystrokes("ctrl-c");
+        cx.simulate_keystrokes(&format!("{modifier}-c"));
         // Include an invalid bitmap beside the valid copied selection. JSON
         // wins, so the image fallback must not emit an error or add another item.
         cx.update(|_, cx| {
@@ -633,7 +703,7 @@ mod tests {
                 .push(gpui::ClipboardEntry::Image(Image::empty()));
             cx.write_to_clipboard(item);
         });
-        cx.simulate_keystrokes("ctrl-v");
+        cx.simulate_keystrokes(&format!("{modifier}-v"));
         let saved = board.read_with(&cx, |board, _| {
             assert_eq!(board.scene().elements.len(), 2);
             for element in &board.scene().elements {
@@ -646,6 +716,19 @@ mod tests {
         });
         cx.update(|_, cx| assert!(!cx.global::<NearApp>().status.is_error()));
         storage::write_board(&path, &saved).unwrap();
+        // Flush before advancing the autosave timer: app-level quit must keep
+        // the very last clipboard edit, not only a previously debounced board.
+        std::fs::remove_file(&path).unwrap();
+        cx.update(|_, cx| flush_working_board(cx).unwrap());
+        assert_eq!(storage::read_board(&path).unwrap(), saved);
+        let blocked = dir.join("not-a-directory");
+        std::fs::write(&blocked, "keep").unwrap();
+        cx.update(|_, cx| {
+            cx.global_mut::<NearApp>().board_path = blocked.join("board.json");
+            assert!(flush_working_board(cx).is_err());
+            cx.global_mut::<NearApp>().board_path = path.clone();
+        });
+        assert_eq!(std::fs::read_to_string(blocked).unwrap(), "keep");
         let reopened = Scene::from_json(&storage::read_board(&path).unwrap());
         assert_eq!(reopened.elements.len(), 2);
         for element in reopened.elements {
@@ -657,7 +740,7 @@ mod tests {
                 .is_some());
         }
         cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_image(&Image::empty())));
-        cx.simulate_keystrokes("ctrl-v");
+        cx.simulate_keystrokes(&format!("{modifier}-v"));
         board.read_with(&cx, |board, _| assert_eq!(board.scene().elements.len(), 2));
         cx.update(|_, cx| assert!(cx.global::<NearApp>().status.is_error()));
         let _ = std::fs::remove_dir_all(dir);

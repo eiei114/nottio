@@ -1,4 +1,4 @@
-"""Rebuild committed Windows icon assets from the generated source (Pillow)."""
+"""Rebuild committed Windows and macOS icon assets (Pillow)."""
 
 from pathlib import Path
 import struct
@@ -32,6 +32,7 @@ def main():
     with Image.open(assets / "nottio-icon-source.png") as source:
         image = master_from_source(source)
     image.save(assets / "nottio.png")
+    image.save(assets / "nottio.icns", format="ICNS")
     icon = assets / "nottio.ico"
     image.save(icon, sizes=[(size, size) for size in SIZES])
     data = icon.read_bytes()

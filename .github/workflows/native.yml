@@ -1,0 +1,59 @@
+name: Native builds
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Toolchain and CPU
+        run: rustc -vV
+      - run: cargo fmt --all -- --check
+      - run: cargo test --locked --workspace
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: python -m pip install Pillow
+      - run: python scripts/test-icon-assets.py
+      - run: python scripts/test-macos-bundle.py
+      - run: cargo build --locked --release
+      - name: Build and verify macOS app bundle
+        if: runner.os == 'macOS'
+        run: |
+          python scripts/build-macos-app.py --no-build --output "$RUNNER_TEMP/nottio.app"
+          plutil -lint "$RUNNER_TEMP/nottio.app/Contents/Info.plist"
+          file "$RUNNER_TEMP/nottio.app/Contents/MacOS/nottio"
+          otool -L "$RUNNER_TEMP/nottio.app/Contents/MacOS/nottio"
+          python scripts/smoke-macos.py --binary "$RUNNER_TEMP/nottio.app/Contents/MacOS/nottio"
+          ditto -c -k --keepParent "$RUNNER_TEMP/nottio.app" "$RUNNER_TEMP/nottio-macos.zip"
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'macOS'
+        with:
+          name: nottio-${{ matrix.os }}
+          path: ${{ runner.temp }}/nottio-macos.zip
+          if-no-files-found: error
