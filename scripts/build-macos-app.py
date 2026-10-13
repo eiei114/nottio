@@ -14,7 +14,7 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_ID = "com.eiei114.nottio"
-MARKER = ".nottio-build"
+MARKER = "Contents/Resources/.nottio-build"
 
 
 def build_bundle(binary, output):
@@ -50,6 +50,7 @@ def build_bundle(binary, output):
         info = {
             "CFBundleName": "nottio",
             "CFBundleDisplayName": "nottio",
+            "CFBundleDevelopmentRegion": "en",
             "CFBundleIdentifier": BUNDLE_ID,
             "CFBundleExecutable": "nottio",
             "CFBundlePackageType": "APPL",

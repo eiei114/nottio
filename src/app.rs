@@ -314,9 +314,9 @@ fn set_menus(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new(&format!("{modifier}-o"), OpenBoard, None),
         KeyBinding::new(&format!("{modifier}-shift-s"), SaveCopy, None),
-        KeyBinding::new(&format!("{modifier}-z"), Undo, None),
-        KeyBinding::new(&format!("{modifier}-shift-z"), Redo, None),
     ]);
+    // The board consumes undo/redo itself, including while editing text. A
+    // global binding would intercept those keys before its raw-key handler.
     if cfg!(target_os = "macos") {
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
     }
@@ -592,6 +592,10 @@ mod tests {
         let path = dir.join("board.json");
         let theme = ThemeHandle::new(ThemeKind::Light);
         let window = cx.update(|cx| {
+            // Exercise actual host bindings too, not just the board's raw keys.
+            cx.on_action(undo);
+            cx.on_action(redo);
+            set_menus(cx);
             cx.set_global(NearApp {
                 board_path: path.clone(),
                 ui_state_path: dir.join("ui-state.json"),
@@ -717,6 +721,14 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         cx.update(|_, cx| flush_working_board(cx).unwrap());
         assert_eq!(storage::read_board(&path).unwrap(), saved);
+        let blocked = dir.join("not-a-directory");
+        std::fs::write(&blocked, "keep").unwrap();
+        cx.update(|_, cx| {
+            cx.global_mut::<NearApp>().board_path = blocked.join("board.json");
+            assert!(flush_working_board(cx).is_err());
+            cx.global_mut::<NearApp>().board_path = path.clone();
+        });
+        assert_eq!(std::fs::read_to_string(blocked).unwrap(), "keep");
         let reopened = Scene::from_json(&storage::read_board(&path).unwrap());
         assert_eq!(reopened.elements.len(), 2);
         for element in reopened.elements {

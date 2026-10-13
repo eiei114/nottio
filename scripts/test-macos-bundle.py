@@ -20,6 +20,8 @@ class MacBundleTest(unittest.TestCase):
             output = root / "nottio.app"
             for _ in range(2):
                 bundle.build_bundle(binary, output)
+                # codesign rejects even hidden extras at the bundle root.
+                self.assertEqual({path.name for path in output.iterdir()}, {"Contents"})
                 with (output / "Contents/Info.plist").open("rb") as source:
                     info = plistlib.load(source)
                 self.assertEqual(info["CFBundleIdentifier"], bundle.BUNDLE_ID)

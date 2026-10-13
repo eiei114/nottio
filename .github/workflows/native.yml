@@ -28,6 +28,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -43,15 +45,15 @@ jobs:
       - name: Build and verify macOS app bundle
         if: runner.os == 'macOS'
         run: |
-          python scripts/build-macos-app.py --no-build
-          plutil -lint target/macos/nottio.app/Contents/Info.plist
-          file target/macos/nottio.app/Contents/MacOS/nottio
-          otool -L target/macos/nottio.app/Contents/MacOS/nottio
-          python scripts/smoke-macos.py
-          ditto -c -k --keepParent target/macos/nottio.app target/macos/nottio-macos.zip
+          python scripts/build-macos-app.py --no-build --output "$RUNNER_TEMP/nottio.app"
+          plutil -lint "$RUNNER_TEMP/nottio.app/Contents/Info.plist"
+          file "$RUNNER_TEMP/nottio.app/Contents/MacOS/nottio"
+          otool -L "$RUNNER_TEMP/nottio.app/Contents/MacOS/nottio"
+          python scripts/smoke-macos.py --binary "$RUNNER_TEMP/nottio.app/Contents/MacOS/nottio"
+          ditto -c -k --keepParent "$RUNNER_TEMP/nottio.app" "$RUNNER_TEMP/nottio-macos.zip"
       - uses: actions/upload-artifact@v4
         if: runner.os == 'macOS'
         with:
           name: nottio-${{ matrix.os }}
-          path: target/macos/nottio-macos.zip
+          path: ${{ runner.temp }}/nottio-macos.zip
           if-no-files-found: error
