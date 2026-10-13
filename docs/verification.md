@@ -126,3 +126,28 @@ unchanged target, arguments and working directory. A native taskbar capture
 visually confirmed the yellow-note/turquoise-arrow icon. No app restart, global
 cache purge, pin removal or app-grouping change was needed. Rust runtime code and
 board storage were untouched, so the preceding 92-test/build results still apply.
+
+## Modern folded-mark revision
+
+The user rejected the original literal sticky/arrow artwork. A primary-source
+comparison of Linear, Raycast, Craft, Obsidian and Microsoft's Windows guidance
+is recorded in `modern-app-icon-research.md`; no reference brand assets are shipped.
+The new porcelain/blue-violet mark is normalized with a fixed source crop and
+an analytic supersampled tile mask to remove generated exterior speckles.
+Three Python asset tests verify deterministic source-to-master pixels, transparent
+exterior, all ten ICO resolutions and explicit rejection of unexpected source
+dimensions. Light/dark small-size previews were visually checked. All 92 Rust
+tests, Clippy, format checks and the optimized Windows release build passed again.
+
+Native verification extracted the new icon from both the executable and the
+running GPUI window class; both show the folded mark. The active nine-object board
+and standard eight-object board were byte-identical to saved backups after restart.
+The existing pin now references a SHA-256-addressed copy matching the committed ICO.
+Repeated Apply/read-only checks verify its bytes and retain launch target/arguments/
+workdir. A changed link path plus targeted update alone still left the old artwork
+visible; even an individual SHUpdateImage notification did not solve that display.
+The optional `-Apply -RefreshShell` standard redraw notification then refreshed
+the taskbar successfully. It may repaint other shell icons but does not delete
+cache files, modify associations/grouping, remove pins or restart Explorer.
+
+![Actual refreshed taskbar icon](images/nottio-modern-taskbar.png)

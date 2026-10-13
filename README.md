@@ -6,7 +6,7 @@ shapes, connect them with arrows, and it saves itself.
 Built on [GPUI](https://gpui.rs) (the UI framework behind Zed) via
 [gpui-whiteboard](https://crates.io/crates/gpui-whiteboard).
 
-<img src="assets/nottio.png" alt="nottio sticky-note and arrow icon" width="128">
+<img src="assets/nottio.png" alt="nottio blue folded-ribbon icon" width="128">
 
 ## Status
 
@@ -89,9 +89,19 @@ To check the built resource: `powershell -File scripts/verify-app-icon.ps1`.
 If a pre-existing taskbar pin still has the old/generic icon, run
 `powershell -File scripts/set-taskbar-icon.ps1 -Apply`. This updates only the
 existing `nottio.lnk` pointing to this checkout's release executable, backs it up,
-sets its icon to the committed ICO, and notifies Explorer about that one link.
+sets its icon to a content-addressed copy of the committed ICO under
+`%APPDATA%\nottio\icons`, and notifies Explorer about that one link. A new filename
+per artwork revision avoids showing an older cached image.
 Launch arguments/workdir remain unchanged; no global cache deletion or app
 identity/grouping change. Omit `-Apply` for a read-only check.
+If the taskbar group still displays a previous revision after updating the link,
+use `-Apply -RefreshShell` for the standard shell redraw notification. Other
+icons may redraw too; this does not delete cache files, alter associations,
+remove pins or restart Explorer.
+
+The current porcelain/blue-violet folded mark replaces the original literal
+sticky/arrow illustration. Research: [modern app icon comparison](docs/modern-app-icon-research.md).
+Asset regression checks: `python scripts/test-icon-assets.py` (Pillow).
 
 ## Keyboard
 

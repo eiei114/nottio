@@ -98,8 +98,11 @@ selection copy; many images therefore increase JSON and undo-snapshot sizes.
 
 ## Windows application identity
 
-`assets/nottio-icon-source.png` is the generated sticky-note/orthogonal-arrow
-artwork. `scripts/generate-icon.py` derives a cleaned 1024px PNG and a ten-size
+`assets/nottio-icon-source.png` is the generated porcelain/blue-violet folded
+mark, superseding the initial literal sticky/arrow artwork. It follows the user's
+request for a more modern software identity; primary-source comparison is in
+`modern-app-icon-research.md`. `scripts/generate-icon.py` crops this source's tile,
+applies a clean supersampled rounded mask, and derives a 1024px PNG and a ten-size
 16–256px ICO; these outputs are committed, so Pillow is not a build dependency.
 `build.rs` uses pinned `embed-resource` to link `assets/windows.rc` into the
 Windows `nottio` executable. ICON group ID **1** matches GPUI Windows' native
@@ -110,7 +113,15 @@ fails closed; non-Windows targets skip it. Existing board data is unrelated.
 A pre-existing taskbar pin has separate icon metadata/cache. On this machine
 `nottio.lnk` had an empty icon filename (`,0`) even though the executable resource
 and GPUI class icon were correct. `scripts/set-taskbar-icon.ps1 -Apply` sets only
-that matching pin's IconLocation to `assets/nottio.ico,0`, backs up the link and
+that matching pin's IconLocation to a verified copy of `assets/nottio.ico` under
+`%APPDATA%/nottio/icons/nottio-<sha256-prefix>.ico,0`, backs up the link and
 issues a targeted shell update. It preserves target/arguments/workdir and leaves
 AppUserModelID/grouping unchanged. It never creates/re-pins applications or clears
 the global Explorer icon cache. Non-Apply mode is read-only; Apply is idempotent.
+The content-addressed path refreshes redesigned artwork without reusing an old
+ICO cache key. Old copies remain so backed-up shortcuts still resolve. The
+source image, PNG and all ICO resolutions are checked by `test-icon-assets.py`.
+If a running/pinned group keeps an old image despite the link update, optional
+`-Apply -RefreshShell` sends SHCNE_ASSOCCHANGED as a standard redraw notification.
+This is broader than the one-link update (other icons may repaint), but changes
+no associations and deletes no cache files. Read-only mode rejects that flag.
