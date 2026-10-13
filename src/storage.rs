@@ -2,13 +2,14 @@
 //!
 //! Two different stores, deliberately:
 //!
-//! - the **working board** (`board.json` under `%APPDATA%/nottio`) is opened on
+//! - the **working board** (`board.json` in the platform's app-data folder) is opened on
 //!   launch and rewritten on every change. It is a cache, not a document, so it
 //!   is written directly rather than atomically.
 //! - an **export** is a real file the user chose and may copy, sync, or hand to
 //!   another app. That one is written temp-then-rename so a crash mid-write can
 //!   never leave a truncated document where a valid one used to be.
 
+use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -16,13 +17,32 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Directory holding the working board and the small UI state alongside it.
 pub fn data_dir() -> PathBuf {
-    // Allows isolated smoke tests and portable boards without touching APPDATA.
-    if let Some(path) = std::env::var_os("NOTTIO_DATA_DIR") {
+    data_dir_for(
+        std::env::consts::OS,
+        |name| std::env::var_os(name),
+        std::env::temp_dir(),
+    )
+}
+
+// Inject environment reads so every platform's policy can be tested without
+// mutating process-global variables or ever touching the user's real board.
+fn data_dir_for(
+    os: &str,
+    mut env: impl FnMut(&str) -> Option<OsString>,
+    fallback: PathBuf,
+) -> PathBuf {
+    let mut env = |name: &str| env(name).filter(|value| !value.is_empty());
+    if let Some(path) = env("NOTTIO_DATA_DIR") {
         return PathBuf::from(path);
     }
-    let base = std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
+    let base = match os {
+        "windows" => env("APPDATA").map(PathBuf::from),
+        "macos" => env("HOME").map(|home| PathBuf::from(home).join("Library/Application Support")),
+        _ => env("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| env("HOME").map(|home| PathBuf::from(home).join(".local/share"))),
+    }
+    .unwrap_or(fallback);
     base.join("nottio")
 }
 
@@ -164,6 +184,64 @@ impl UiState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn resolve(os: &str, vars: &[(&str, &str)]) -> PathBuf {
+        data_dir_for(
+            os,
+            |name| {
+                vars.iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| OsString::from(value))
+            },
+            PathBuf::from("fallback"),
+        )
+    }
+
+    #[test]
+    fn macos_data_is_persistent_application_support_not_temp_or_appdata() {
+        assert_eq!(
+            resolve("macos", &[("HOME", "/Users/test"), ("APPDATA", "wrong")]),
+            PathBuf::from("/Users/test/Library/Application Support/nottio")
+        );
+    }
+
+    #[test]
+    fn windows_storage_path_is_unchanged() {
+        assert_eq!(
+            resolve("windows", &[("APPDATA", "roaming"), ("HOME", "wrong")]),
+            PathBuf::from("roaming/nottio")
+        );
+    }
+
+    #[test]
+    fn portable_override_wins_on_both_platforms() {
+        for os in ["windows", "macos"] {
+            assert_eq!(
+                resolve(
+                    os,
+                    &[
+                        ("NOTTIO_DATA_DIR", "portable"),
+                        ("HOME", "home"),
+                        ("APPDATA", "appdata")
+                    ]
+                ),
+                PathBuf::from("portable")
+            );
+        }
+    }
+
+    #[test]
+    fn empty_environment_values_do_not_select_current_directory() {
+        for os in ["windows", "macos"] {
+            assert_eq!(
+                resolve(
+                    os,
+                    &[("NOTTIO_DATA_DIR", ""), ("HOME", ""), ("APPDATA", "")]
+                ),
+                PathBuf::from("fallback/nottio")
+            );
+        }
+    }
 
     #[test]
     fn ui_state_round_trips_through_disk() {

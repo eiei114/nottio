@@ -4,9 +4,11 @@
 
 <h1 align="center">nottio</h1>
 
-<p align="center">A local-first whiteboard for Windows — stickies, shapes, images, and connected ideas.</p>
+<p align="center">A local-first whiteboard for Windows and macOS — stickies, shapes, images, and connected ideas.</p>
 
-FigJam-shaped sticky board for Windows. Drop notes on an infinite canvas, draw
+<p align="center">English (default) · <a href="docs/readme-ja.md">日本語</a> · <a href="docs/readme-zh-cn.md">简体中文</a></p>
+
+FigJam-shaped sticky board for Windows and macOS. Drop notes on an infinite canvas, draw
 shapes, connect them with arrows, and it saves itself.
 
 Built on [GPUI](https://gpui.rs) (the UI framework behind Zed) via
@@ -14,8 +16,9 @@ Built on [GPUI](https://gpui.rs) (the UI framework behind Zed) via
 
 ## Status
 
-Local Windows prototype. Interaction regressions run through GPUI's rendered
-element tree; a native Windows launch is also smoke-tested. Not a collaborative
+Local desktop prototype. Interaction regressions run through GPUI's rendered
+element tree. Native CI builds cover Windows, Apple Silicon and Intel Macs;
+macOS GUI/IME acceptance still needs a physical Mac. Not a collaborative
 FigJam replacement or a production-hardened release.
 
 - Infinite canvas with pan and zoom; a 100% indicator in the corner.
@@ -28,7 +31,7 @@ FigJam replacement or a production-hardened release.
 - Shapes: rectangle, rounded rectangle, ellipse, diamond, triangle, star,
   hexagon; freehand pen, straight lines, arrows.
 - **Paste images**: copy a screenshot or raster image, focus the canvas, then
-  **Ctrl+V** (or right-click → Paste). It becomes a selected image object,
+  **Ctrl+V / ⌘V** (or right-click → Paste). It becomes a selected image object,
   initially 280 screen pixels on its longest edge. Drag to move; use selection
   handles to resize. Images also follow overlapping frames and support undo/redo.
   PNG bytes are embedded in the JSON, so reopen, Save a copy and image-object
@@ -68,7 +71,7 @@ FigJam replacement or a production-hardened release.
 - Colour picker with a saved-swatch palette; per-element stroke, fill and text
   colour.
 - Mind-map and flowchart seed templates.
-- Autosave to `%APPDATA%\nottio\board.json`, plus **File ▸ Save a copy…** and
+- Autosave to the platform's app-data folder, plus **File ▸ Save a copy…** and
   **File ▸ Open board…** through native dialogs.
 - Light and dark themes; the toolbar can be dragged anywhere on the board and
   remembers where it was left.
@@ -82,7 +85,9 @@ cargo run            # development
 cargo build --release
 ```
 
-Requirements are the same as Zed's: a stable Rust toolchain with the
+### Windows
+
+Requirements: a stable Rust toolchain with the
 `x86_64-pc-windows-msvc` target, Visual Studio Build Tools with the C++ desktop
 workload, and the Windows SDK. No CMake is needed.
 
@@ -109,6 +114,28 @@ The current porcelain/blue-violet folded mark replaces the original literal
 sticky/arrow illustration. Research: [modern app icon comparison](docs/modern-app-icon-research.md).
 Asset regression checks: `python scripts/test-icon-assets.py` (Pillow).
 
+### macOS
+
+macOS **14 Sonoma or newer**, Apple Silicon or Intel, stable Rust, and Apple's
+Command Line Tools (`xcode-select --install`). Use the native Rust target for
+your Mac (`aarch64-apple-darwin` or `x86_64-apple-darwin`). `cargo run` launches
+the same board through GPUI's native Cocoa/Metal backend. Metal shaders are
+embedded and compiled on launch; a separate Xcode Metal compiler is not needed.
+
+To build a Finder/Dock app with the same icon (Python **3.11+**, no Pillow needed):
+
+```sh
+python3 scripts/build-macos-app.py
+open target/macos/nottio.app
+```
+
+The script builds release mode, includes the committed ICNS and license notices,
+and ad-hoc signs and verifies the bundle. It only replaces bundles bearing its
+own build marker. You can copy `nottio.app` into your own Applications folder.
+This is a local build, **not** a Developer ID signed/notarized download, DMG,
+installer, or universal binary. Build on each architecture separately.
+See [macOS verification](docs/macos-support.md) for the remaining manual checks.
+
 ## Keyboard
 
 Tool shortcuts are single keys, active whenever the canvas has focus:
@@ -134,8 +161,13 @@ cut and paste elements (Ctrl+V also pastes clipboard images); `Ctrl+]` / `Ctrl+[
 / `Ctrl+U` / `Ctrl+Shift+X` / `Ctrl+Shift+H` apply bold, italic, underline,
 strikethrough and highlight to text.
 
-Image paste accepts raster bitmap entries exposed by GPUI's Windows clipboard
-reader (including PNG, JPEG and CF_DIB/BMP). It normalizes to a static PNG and
+On macOS use **⌘ instead of Ctrl** for these edit shortcuts. **⌘O** opens a
+board, **⌘⇧S** saves a copy, and **⌘Q** saves the current board before quitting.
+Control still bypasses connector snapping / pans; it is not replaced by Command
+for those mouse gestures. Windows uses Ctrl+O / Ctrl+Shift+S for file actions.
+
+Image paste accepts raster bitmap entries exposed by GPUI's native clipboard
+reader (including PNG, JPEG, Windows CF_DIB/BMP and macOS TIFF). It normalizes to a static PNG and
 preserves transparency where the source contains it. Limits: 32 MiB encoded
 input/output, 8192 pixels per side, 16 million pixels. SVG, animation and Explorer
 file-path paste are not supported. Imported external image URLs/files are not
@@ -151,14 +183,18 @@ the grip's other affordance to flip it between a row and a column.
 | --- | --- |
 | `%APPDATA%\nottio\board.json` | The working board. Rewritten on every change. |
 | `%APPDATA%\nottio\ui-state.json` | Theme, toolbar position, saved swatches. |
+| `~/Library/Application Support/nottio/board.json` | macOS working board. |
+| `~/Library/Application Support/nottio/ui-state.json` | macOS theme, toolbar position, saved swatches. |
 
 The working board is a cache, not a document — a copy saved through **Save a
 copy…** is the thing worth backing up.
 
 `NOTTIO_DATA_DIR` overrides the working directory for isolated smoke tests or a
-portable board. Normal launches continue to use `%APPDATA%\nottio`. The current
-scene is also saved synchronously on window close, so the debounce cannot drop
-the last completed edit.
+portable board. Normal launches use the platform folder above, never the app
+bundle or current checkout. The current scene is saved synchronously on window
+close and app-level quit, so pending debounce edits are flushed. An explicit
+Quit action reports write failure instead of quitting; a system-forced shutdown
+cannot always be cancelled. Windows' existing storage location is unchanged.
 
 ## Code layout
 
@@ -195,6 +231,8 @@ it lives. The short version:
 ```sh
 cargo test
 cargo clippy --workspace --all-targets -- -D warnings
+python scripts/test-icon-assets.py    # needs Pillow
+python scripts/test-macos-bundle.py   # standard library only
 ```
 
 The suite covers the parts that are easy to get subtly wrong and hard to see by

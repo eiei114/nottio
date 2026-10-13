@@ -172,6 +172,23 @@ mod tests {
     }
 
     #[test]
+    fn macos_tiff_clipboard_normalizes_to_portable_png() {
+        let (src, w, h) = from_clipboard(&clipboard(image::ImageFormat::Tiff))
+            .unwrap()
+            .unwrap();
+        assert_eq!((w, h), (6.0, 3.0));
+        let bytes = STANDARD.decode(src.strip_prefix(PREFIX).unwrap()).unwrap();
+        assert_eq!(
+            image::guess_format(&bytes).unwrap(),
+            image::ImageFormat::Png
+        );
+        assert_eq!(
+            decode(&bytes).unwrap().into_rgba8().get_pixel(0, 0).0,
+            [220, 80, 30, 128]
+        );
+    }
+
+    #[test]
     fn invalid_unsupported_and_oversized_images_are_rejected() {
         assert!(from_clipboard(&ClipboardItem::new_string("text".into()))
             .unwrap()

@@ -1,13 +1,33 @@
 # nottio context
 
-Local Windows GPUI board prototype, developed in the Production/nottio repository.
+Local Windows/macOS GPUI board prototype, developed in the Production/nottio repository.
 Source: current user conversation. This folder is the implementation boundary;
 there is no server, account system, collaboration service or web frontend.
 
 Public source repository: https://github.com/eiei114/nottio (default branch `main`).
 Source publication does not publish a user's working board or UI state. Those
 remain local; root-level portable board files, backups and local env files are
-ignored by Git. No packaged binary release or installer is implied.
+ignored by Git. Local macOS `.app` builds and CI artifacts are supported; no
+signed/notarized public binary release or installer is implied.
+
+## Platform and documentation contract
+
+Windows uses the existing `%APPDATA%/nottio` location. macOS 14+ uses
+`~/Library/Application Support/nottio`; `NOTTIO_DATA_DIR` overrides either.
+The board schema, object model and image normalization are shared. GPUI's native
+Cocoa/Metal backend is selected automatically; macOS-only `runtime_shaders`
+avoids requiring Xcode's separate offline Metal compiler. Command edits and
+Command+O/Shift+S/Q follow Mac conventions; Control mouse gestures are unchanged.
+App-level quit flushes pending edits, not only the window-close hook.
+
+`scripts/build-macos-app.py` creates a native-architecture Finder bundle from the
+release binary, committed ICNS and third-party notices, with ad-hoc signing.
+It does not sign with Developer ID, notarize or produce a universal binary.
+Native CI and the physical acceptance checklist are in `macos-support.md`.
+
+Documentation defaults to English in the root README. Japanese and Simplified
+Chinese user guides live in `docs/readme-ja.md` and `docs/readme-zh-cn.md`, with
+language links on all three. Document translation is not UI localization.
 
 ## Vocabulary
 

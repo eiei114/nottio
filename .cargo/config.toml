@@ -1,0 +1,3 @@
+[env]
+# Supported macOS baseline; also used in the Finder bundle's Info.plist.
+MACOSX_DEPLOYMENT_TARGET = "14.0"
