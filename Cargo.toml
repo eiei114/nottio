@@ -1,0 +1,23 @@
+[package]
+name = "nottio"
+version = "0.1.0"
+edition = "2021"
+description = "FigJam-like sticky board for Windows: paste notes, draw shapes, connect them with arrows."
+publish = false
+
+[dependencies]
+# GPUI ships on crates.io as the `gpui-pre` snapshot family (weekly snapshots of
+# zed; each version = one zed sha). Zed stopped publishing the plain `gpui` crate
+# (0.2.2 was the last one, 2025-10-22), so this is the current path.
+#
+# Every gpui-pre release is a DIFFERENT zed snapshot, so the app and every gpui
+# crate in the tree must resolve to the SAME version (one gpui graph). Keep the
+# exact pins below in step and let Cargo.lock hold them.
+# gpui-whiteboard 0.5.1 requires `gpui-pre` 0.3 -> 0.3.9 is the shared target.
+gpui = { package = "gpui-pre", version = "=0.3.9" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9" }
+gpui-whiteboard = "=0.5.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
