@@ -86,6 +86,13 @@ resolutions from 16px to 256px. No runtime image path is needed for the app icon
 To regenerate assets: `python scripts/generate-icon.py` (requires Pillow).
 To check the built resource: `powershell -File scripts/verify-app-icon.ps1`.
 
+If a pre-existing taskbar pin still has the old/generic icon, run
+`powershell -File scripts/set-taskbar-icon.ps1 -Apply`. This updates only the
+existing `nottio.lnk` pointing to this checkout's release executable, backs it up,
+sets its icon to the committed ICO, and notifies Explorer about that one link.
+Launch arguments/workdir remain unchanged; no global cache deletion or app
+identity/grouping change. Omit `-Apply` for a read-only check.
+
 ## Keyboard
 
 Tool shortcuts are single keys, active whenever the canvas has focus:

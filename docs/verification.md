@@ -113,3 +113,16 @@ This uses read-only Win32 inspection, not Explorer cache manipulation or runtime
 icon injection. The app restarted using the same data directory; the active
 nine-object board and separate standard eight-object board were byte-identical
 to their saved backups after restart.
+
+### Pre-existing taskbar pin
+
+The subsequent taskbar request exposed a separate shortcut setting: the pin
+targeted the correct executable but its IconLocation was `,0` (empty filename).
+The resource/window-class check above still passed. A read-only shortcut check
+reported `configured: false`; applying `scripts/set-taskbar-icon.ps1` backed up
+the link, set the generated ICO explicitly and issued SHCNE_UPDATEITEM for that
+link only. Repeated Apply/read-only checks report `configured: true`, verifying
+unchanged target, arguments and working directory. A native taskbar capture
+visually confirmed the yellow-note/turquoise-arrow icon. No app restart, global
+cache purge, pin removal or app-grouping change was needed. Rust runtime code and
+board storage were untouched, so the preceding 92-test/build results still apply.

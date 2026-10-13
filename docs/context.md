@@ -106,3 +106,11 @@ Windows `nottio` executable. ICON group ID **1** matches GPUI Windows' native
 `load_icon()`/window-class registration, covering shell, title-bar and taskbar
 identity without a runtime path or a patched framework. Resource compilation
 fails closed; non-Windows targets skip it. Existing board data is unrelated.
+
+A pre-existing taskbar pin has separate icon metadata/cache. On this machine
+`nottio.lnk` had an empty icon filename (`,0`) even though the executable resource
+and GPUI class icon were correct. `scripts/set-taskbar-icon.ps1 -Apply` sets only
+that matching pin's IconLocation to `assets/nottio.ico,0`, backs up the link and
+issues a targeted shell update. It preserves target/arguments/workdir and leaves
+AppUserModelID/grouping unchanged. It never creates/re-pins applications or clears
+the global Explorer icon cache. Non-Apply mode is read-only; Apply is idempotent.
