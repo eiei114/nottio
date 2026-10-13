@@ -1,4 +1,4 @@
-# Sticky and connector verification
+# Sticky, connector, section and clipboard-image verification
 
 Commands run on Windows against this workspace:
 
@@ -9,7 +9,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo build --release --bin nottio
 ```
 
-The suite has 74 passing tests (62 library + 12 host). Six GPUI input-tree
+The suite has 92 passing tests (76 library + 16 host). Ten GPUI input-tree
 integration tests cover native-toolbar sticky drag creation, Japanese multiline
 text, note movement, creation cancellation, genuine snapped note-to-shape
 arrows, elbow dragging, independent arrowhead toggles, straightening, cancelling
@@ -26,12 +26,36 @@ and redoes that reconnection, then switches through straight/bent modes and chec
 JSON restore. A pure geometry test checks distinct paths, rounded bent corners,
 curve handle placement and serialization.
 
-The sixth input-tree test adds multiple folds from the toolbar, drags an
-individual additional handle, checks that other handles/attachments/heads remain
-unchanged, cancels another drag, double-clicks to remove a specific fold, undoes
-and redoes that removal, removes the last fold with the toolbar and returns to
-automatic routing. Compact JSON persistence and capacity-bounded transform
-behavior for multiple handles also have a pure regression test.
+Portion editing is tested through the actual rendered handles: a one-portion
+connector grows terminal folds, an interior portion moves on one axis, the end
+portion adds more folds, Escape restores the whole path, undo/redo restore the
+gesture, and alignment collapses redundant vertices. A no-op handle click creates
+no undo entry. The removed add/remove-fold buttons are asserted absent. Pure
+tests cover sharp path editing, compact JSON, legacy waypoint documents, endpoint
+following, capacity, transforms and coincident endpoints.
+
+The shortcut test checks X, Shift+L, L, V/Escape, Ctrl snapping bypass and Shift+S.
+Frame integration tests create a frame over existing objects, rename its header,
+move notes/triangles/attached arrows/crossing lines together, include a one-unit
+overlap, do not scoop up unrelated objects mid-drag, undo/redo, cancel, save/restore,
+let a member leave, and preserve a connector to that outside member. A separate
+test covers default-square creation on click and Enter finishing frame rename.
+Pure tests cover actual line intersection, overlap exit and nonduplicated ownership.
+
+The actual diagonal connector from the user's saved scene is a regression fixture.
+Tests check canonical horizontal/vertical legs, unchanged endpoints, persisted
+repair, no direct Bent rotation, and normalization after a group rotation.
+
+The host input-tree test wires the real application clipboard/image hooks, writes
+a bitmap to GPUI's **test-platform** clipboard, then dispatches Ctrl+V through the
+rendered board. It checks the selected object's initial 280 × 140 geometry,
+movement, nonuniform edge resize, undoing movement/resizing/creation, redo,
+Ctrl+C/Ctrl+V with identical embedded pixels, disk save/reopen, source rendering,
+JSON priority over an invalid bitmap, and rejection without scene changes.
+Image unit tests check PNG transparency, quarter-turn cache reuse, BMP/JPEG
+normalization, invalid bytes, encoded-size limits, and refusal of URL/file sources.
+A frame test checks partial image overlap, exactly-once movement and full exit.
+These checks do not overwrite the user's real Windows clipboard.
 
 Native Windows render smoke: a separate `NOTTIO_DATA_DIR` fixture displayed
 Japanese sticky text, rectangles, an orthogonal connector detouring around an
@@ -42,11 +66,33 @@ fixture did not overwrite or delete the working board.
 
 ![Native Windows connector smoke fixture](images/nottio-connectors.png)
 
-A second isolated native fixture displayed three independent manual handles,
+Historical smoke, before direct portion editing: a second isolated fixture
+displayed three independent manual handles,
 multiple rounded folds and the **＋ 折り目 / − 折り目** toolbar actions. Closing it
 saved the two additional handles as JSON, retaining both endpoint bindings.
 
 ![Native Windows multiple-fold smoke fixture](images/nottio-folds.png)
+
+The add/remove-fold buttons in that historical screenshot have since been
+replaced by direct portion handles. Current native render-only smoke shows a
+section title/background, selected bent path and a repaired connector from the
+user's saved scene. All sharp legs are horizontal/vertical. It preserves the
+active nine-object fixture and the separate eight-object standard board.
+
+![Native Windows section and right-angle connector render](images/nottio-sections-orthogonal.png)
+
+One physical mouse-injection attempt did not satisfy the intended exact-coordinate
+movement assertion. Native movement is **not** claimed from that attempt; the
+deterministic input-tree tests above provide movement evidence instead. Clipboard
+Ctrl+V is verified by the host test, not claimed as a physical Windows input smoke.
+
+The image release also opened a five-object isolated fixture from disk. Native
+Windows rendering displayed its embedded transparent PNG and the same bitmap at
+a 90° rotation. Closing retained all five objects. The normal active nine-object
+board was then reopened with its saved camera; the separate standard eight-object
+board remained unchanged. This cropped artifact contains only generated fixtures:
+
+![Native embedded PNG and quarter-turn render](images/nottio-images.png)
 
 The deterministic interaction tests use GPUI's test platform. They do not
 certify physical mouse automation, every IME composition flow, accessibility,

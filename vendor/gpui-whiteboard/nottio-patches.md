@@ -91,3 +91,43 @@ Source: user's subsequent request to detour arrows so they do not overlap object
   additional handles when returning to bent mode.
 
 Source: user's latest request to increase the number of folds.
+
+## Direct portion editing and sections (subsequent requests)
+
+- The add/remove-fold toolbar was superseded by per-portion middle handles.
+  `connector_edit.rs` moves interior portions on one axis, grows terminal doglegs
+  without moving endpoints, and removes redundant vertices on release. Escape,
+  undo/redo and no-op clicks preserve correct transaction boundaries.
+- `manual_polyline` differentiates exact saved inner vertices from old waypoint
+  controls, using the existing compact bend fields. Endpoint following maintains
+  orthogonal terminal legs. X/Shift+L, L, V/Escape follow the connector shortcuts;
+  Ctrl bypasses snapping in connector gestures without losing canvas pan elsewhere.
+- `ElementKind::Frame(BoxGeom)`, standalone Frame tool / Shift+S: default square
+  on click, custom bounds on drag, header name editable with Enter to finish.
+- `frame.rs` derives single-owner membership from any positive overlap. Geometry
+  bounds count for notes/shapes; line/pen paths use stroke intersection. Follower
+  IDs freeze at grab time. Frame movement translates those followers once,
+  preserving arrows' external anchors. Undo/redo and JSON restore all geometry.
+- Frames remain background layers, cannot rotate/nest and are excluded from
+  connector obstacles/targets. Resizing changes containment without scaling
+  children. Removing/copying a frame acts on its boundary, not its contents.
+
+Source: user requests for FigJam-like interaction and overlapping frame groups;
+primary references and intentional differences are documented in the project.
+
+## Right-angle invariant and clipboard-image fallback
+
+- Diagonal manual Bent paths are canonicalized on load and when stored. Rendering
+  normalizes sharp legs after transforms too. Endpoints and supplied waypoints
+  survive via cardinal elbows/doglegs. Bent direct rotation is disabled; rotated
+  terminal normals use world cardinal exits. Initial tool is Select.
+- `PasteImageFn` supplies a durable source and pixel dimensions only after copied
+  board JSON is unavailable. Ctrl+V and context-menu Paste share placement at the
+  viewport center, selection, one undo snapshot and ordinary persistence flush.
+  Text editing keeps its existing text-paste behavior.
+- Image overlays use explicit pixel width/height and Fill, matching the model's
+  nonuniform edge-resize handles without cropping. Hosts still own image bytes,
+  decoding, quarter-turn variants and cache policy. nottio embeds bounded PNG
+  pixels in JSON; no operating-system clipboard dependency was added here.
+
+Source: user's diagonal-arrow screenshot and image-copy/paste request.

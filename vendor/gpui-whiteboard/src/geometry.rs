@@ -15,6 +15,7 @@ pub(crate) fn committable(kind: &ElementKind) -> bool {
         | ElementKind::Triangle(b)
         | ElementKind::RoundRect(b)
         | ElementKind::Sticky(b)
+        | ElementKind::Frame(b)
         | ElementKind::Star(b)
         | ElementKind::Hexagon(b) => b.w > 1.0 || b.h > 1.0,
         ElementKind::Line(s) | ElementKind::Arrow(s) => {
@@ -38,6 +39,7 @@ pub(crate) fn is_closed_shape(kind: &ElementKind) -> bool {
             | ElementKind::Triangle(_)
             | ElementKind::RoundRect(_)
             | ElementKind::Sticky(_)
+            | ElementKind::Frame(_)
             | ElementKind::Star(_)
             | ElementKind::Hexagon(_)
     )
@@ -54,6 +56,7 @@ pub(crate) fn set_kind_width(kind: &mut ElementKind, w: f32) {
         | ElementKind::Triangle(b)
         | ElementKind::RoundRect(b)
         | ElementKind::Sticky(b)
+        | ElementKind::Frame(b)
         | ElementKind::Star(b)
         | ElementKind::Hexagon(b) => b.width = w,
         ElementKind::Line(s) | ElementKind::Arrow(s) => s.width = w,
@@ -76,6 +79,7 @@ pub(crate) fn rotate_pt(x: f32, y: f32, cx: f32, cy: f32, a: f32) -> (f32, f32) 
 /// other kinds. Lets the rotation/selection/resize code treat all three alike.
 pub(crate) fn box_like(kind: &ElementKind) -> Option<(f32, f32, f32, f32, f32)> {
     match kind {
+        ElementKind::Frame(b) => Some((b.x, b.y, b.w, b.h, 0.0)),
         ElementKind::Rect(b)
         | ElementKind::Ellipse(b)
         | ElementKind::Diamond(b)
@@ -133,7 +137,12 @@ pub(crate) fn aabb(pts: &[[f32; 2]]) -> (f32, f32, f32, f32) {
 /// Whether an element can be rotated. Page-cards are HTML overlays GPUI can't
 /// transform, so they're excluded (the rotate handle never shows for them).
 pub(crate) fn rotatable(kind: &ElementKind) -> bool {
-    !matches!(kind, ElementKind::Embed(_))
+    if let ElementKind::Line(seg) | ElementKind::Arrow(seg) = kind
+        && seg.connector_type == ConnectorType::Bent
+    {
+        return false;
+    }
+    !matches!(kind, ElementKind::Embed(_) | ElementKind::Frame(_))
 }
 
 /// Snap an absolute orientation (radians) while rotating: with `shift`, to the
@@ -169,7 +178,7 @@ pub(crate) fn reference_angle(kind: &ElementKind) -> Option<f32> {
         ElementKind::Text(t) => Some(t.rotation),
         ElementKind::Image(im) => Some(snap_quarter(im.rotation)),
         ElementKind::Line(s) | ElementKind::Arrow(s) => Some((s.y2 - s.y1).atan2(s.x2 - s.x1)),
-        ElementKind::Draw(_) | ElementKind::Embed(_) => None,
+        ElementKind::Draw(_) | ElementKind::Embed(_) | ElementKind::Frame(_) => None,
     }
 }
 
@@ -187,6 +196,9 @@ pub(crate) fn rotate_element(kind: &mut ElementKind, cx: f32, cy: f32, delta: f3
         (nx - w / 2.0, ny - h / 2.0)
     };
     match kind {
+        ElementKind::Frame(b) => {
+            (b.x, b.y) = orbit(b.x, b.y, b.w, b.h);
+        }
         ElementKind::Rect(b)
         | ElementKind::Ellipse(b)
         | ElementKind::Diamond(b)
@@ -297,6 +309,7 @@ pub(crate) fn bbox(kind: &ElementKind) -> (f32, f32, f32, f32) {
         | ElementKind::Triangle(_)
         | ElementKind::RoundRect(_)
         | ElementKind::Sticky(_)
+        | ElementKind::Frame(_)
         | ElementKind::Star(_)
         | ElementKind::Hexagon(_)
         | ElementKind::Text(_)
@@ -329,6 +342,9 @@ pub(crate) fn elements_extent(elems: &[Element]) -> (f32, f32) {
 
 /// Whether an element exposes connector points while hovered.
 pub(crate) fn connector_capable(kind: &ElementKind) -> bool {
+    if matches!(kind, ElementKind::Frame(_)) {
+        return false;
+    }
     matches!(kind, ElementKind::Text(_) | ElementKind::Image(_)) || is_closed_shape(kind)
 }
 
@@ -372,6 +388,12 @@ pub(crate) fn connector_world_pos_in(
 
 /// Whether `(wx, wy)` falls within an element's bounds, padded by `pad` (world).
 pub(crate) fn hit_test(kind: &ElementKind, wx: f32, wy: f32, pad: f32) -> bool {
+    if let ElementKind::Frame(b) = kind {
+        return wx >= b.x - pad
+            && wx <= b.x + b.w + pad
+            && wy >= b.y - 28.0 - pad
+            && wy <= b.y + b.h + pad;
+    }
     if let ElementKind::Line(s) | ElementKind::Arrow(s) = kind
         && (s.has_manual_bends()
             || s.route.is_some()
@@ -413,6 +435,7 @@ pub(crate) fn translate(kind: &mut ElementKind, dx: f32, dy: f32) {
         | ElementKind::Triangle(b)
         | ElementKind::RoundRect(b)
         | ElementKind::Sticky(b)
+        | ElementKind::Frame(b)
         | ElementKind::Star(b)
         | ElementKind::Hexagon(b) => {
             b.x += dx;
@@ -580,6 +603,7 @@ pub(crate) fn resize_about(kind: &mut ElementKind, ax: f32, ay: f32, sx: f32, sy
         | ElementKind::Triangle(b)
         | ElementKind::RoundRect(b)
         | ElementKind::Sticky(b)
+        | ElementKind::Frame(b)
         | ElementKind::Star(b)
         | ElementKind::Hexagon(b) => {
             let (x0, x1) = (fx(b.x), fx(b.x + b.w));

@@ -238,6 +238,21 @@ fn build_board(
             .and_then(|item| item.text())
             .filter(|text| ui::looks_like_elements(text))
     }));
+    view.set_on_paste_image(Rc::new(|_window, cx| {
+        let item = cx.read_from_clipboard()?;
+        match crate::images::from_clipboard(&item) {
+            Ok(image) => image,
+            Err(error) => {
+                cx.global_mut::<NearApp>().status = Status::Failed(error);
+                ui::repaint(cx);
+                None
+            }
+        }
+    }));
+    let image_cache = Rc::new(std::cell::RefCell::new(crate::images::ImageCache::default()));
+    view.set_on_image(Rc::new(move |src, rotation, _window, _cx| {
+        image_cache.borrow_mut().source(src, rotation)
+    }));
 
     // --- toolbar layout and saved swatches -------------------------------
     let layout_path = ui_state_path.clone();
@@ -496,4 +511,155 @@ pub(crate) fn main() {
         .expect("could not open the nottio window");
         cx.activate(true);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{point, Image, ImageFormat, MouseButton, TestAppContext, VisualTestContext};
+    use gpui_whiteboard::ElementKind;
+    use std::io::Cursor;
+
+    #[gpui::test]
+    fn ctrl_v_pastes_a_real_clipboard_image_moves_copies_undoes_and_reopens(
+        cx: &mut TestAppContext,
+    ) {
+        let dir = std::env::temp_dir().join(format!("nottio-image-ui-{}", std::process::id()));
+        let path = dir.join("board.json");
+        let theme = ThemeHandle::new(ThemeKind::Light);
+        let window = cx.update(|cx| {
+            cx.set_global(NearApp {
+                board_path: path.clone(),
+                ui_state_path: dir.join("ui-state.json"),
+                ui: UiState::default(),
+                status: Status::Empty,
+                theme: theme.clone(),
+                window: None,
+            });
+            let window = cx
+                .open_window(Default::default(), |_, cx| {
+                    let board = cx.new(|cx| {
+                        build_board(Scene::default(), theme.clone(), &UiState::default(), cx)
+                    });
+                    cx.new(|_| RootView {
+                        board,
+                        theme: theme.clone(),
+                    })
+                })
+                .unwrap();
+            cx.global_mut::<NearApp>().window = Some(window.into());
+            window
+        });
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        let root = window.root(&mut cx).unwrap();
+        let board = root.read_with(&cx, |root, _| root.board.clone());
+        cx.run_until_parked();
+        let mut bytes = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgba8(120, 60)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        cx.update(|_, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_image(&Image::from_bytes(
+                ImageFormat::Png,
+                bytes.into_inner(),
+            )))
+        });
+        let focus = point(px(400.0), px(350.0));
+        cx.simulate_mouse_down(focus, MouseButton::Left, Default::default());
+        cx.simulate_mouse_up(focus, MouseButton::Left, Default::default());
+        cx.simulate_keystrokes("ctrl-v");
+        cx.run_until_parked();
+        let original = board.read_with(&cx, |board, _| {
+            assert_eq!(board.scene().elements.len(), 1);
+            let ElementKind::Image(image) = &board.scene().elements[0].kind else {
+                panic!()
+            };
+            assert!(image.src.starts_with("data:image/png;base64,"));
+            assert_eq!((image.w, image.h), (280.0, 140.0));
+            image.clone()
+        });
+        let center = board.read_with(&cx, |board, _| board.viewport_center());
+        // The host has a 30px status strip; the board's origin is just below it.
+        let from = point(px(center[0]), px(center[1] + 30.0));
+        let to = point(from.x + px(70.0), from.y + px(40.0));
+        cx.simulate_mouse_down(from, MouseButton::Left, Default::default());
+        cx.simulate_mouse_move(to, Some(MouseButton::Left), Default::default());
+        cx.simulate_mouse_up(to, MouseButton::Left, Default::default());
+        board.read_with(&cx, |board, _| {
+            let ElementKind::Image(image) = &board.scene().elements[0].kind else {
+                panic!()
+            };
+            assert!((image.x - original.x - 70.0).abs() < 0.01);
+            assert!((image.y - original.y - 40.0).abs() < 0.01);
+        });
+        cx.simulate_keystrokes("ctrl-z");
+        board.read_with(&cx, |board, _| {
+            let ElementKind::Image(image) = &board.scene().elements[0].kind else {
+                panic!()
+            };
+            assert_eq!((image.x, image.y), (original.x, original.y));
+        });
+        // Undo intentionally clears selection. Select before grabbing a handle.
+        cx.simulate_mouse_down(from, MouseButton::Left, Default::default());
+        cx.simulate_mouse_up(from, MouseButton::Left, Default::default());
+        let edge = point(
+            px(original.x + original.w),
+            px(original.y + original.h / 2.0 + 30.0),
+        );
+        let resized = point(edge.x + px(80.0), edge.y);
+        cx.simulate_mouse_down(edge, MouseButton::Left, Default::default());
+        cx.simulate_mouse_move(resized, Some(MouseButton::Left), Default::default());
+        cx.simulate_mouse_up(resized, MouseButton::Left, Default::default());
+        board.read_with(&cx, |board, _| {
+            let ElementKind::Image(image) = &board.scene().elements[0].kind else {
+                panic!()
+            };
+            assert_eq!((image.w, image.h), (360.0, 140.0));
+            assert_eq!(image.src, original.src);
+        });
+        cx.simulate_keystrokes("ctrl-z");
+        cx.simulate_keystrokes("ctrl-z");
+        board.read_with(&cx, |board, _| assert!(board.scene().elements.is_empty()));
+        cx.simulate_keystrokes("ctrl-shift-z");
+        cx.simulate_mouse_down(from, MouseButton::Left, Default::default());
+        cx.simulate_mouse_up(from, MouseButton::Left, Default::default());
+        cx.simulate_keystrokes("ctrl-c");
+        // Include an invalid bitmap beside the valid copied selection. JSON
+        // wins, so the image fallback must not emit an error or add another item.
+        cx.update(|_, cx| {
+            let mut item = cx.read_from_clipboard().unwrap();
+            assert!(ui::looks_like_elements(&item.text().unwrap()));
+            item.entries
+                .push(gpui::ClipboardEntry::Image(Image::empty()));
+            cx.write_to_clipboard(item);
+        });
+        cx.simulate_keystrokes("ctrl-v");
+        let saved = board.read_with(&cx, |board, _| {
+            assert_eq!(board.scene().elements.len(), 2);
+            for element in &board.scene().elements {
+                let ElementKind::Image(image) = &element.kind else {
+                    panic!()
+                };
+                assert_eq!(image.src, original.src);
+            }
+            board.scene().to_json()
+        });
+        cx.update(|_, cx| assert!(!cx.global::<NearApp>().status.is_error()));
+        storage::write_board(&path, &saved).unwrap();
+        let reopened = Scene::from_json(&storage::read_board(&path).unwrap());
+        assert_eq!(reopened.elements.len(), 2);
+        for element in reopened.elements {
+            let ElementKind::Image(image) = element.kind else {
+                panic!()
+            };
+            assert!(crate::images::ImageCache::default()
+                .source(&image.src, image.rotation)
+                .is_some());
+        }
+        cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_image(&Image::empty())));
+        cx.simulate_keystrokes("ctrl-v");
+        board.read_with(&cx, |board, _| assert_eq!(board.scene().elements.len(), 2));
+        cx.update(|_, cx| assert!(cx.global::<NearApp>().status.is_error()));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

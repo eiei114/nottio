@@ -105,6 +105,13 @@ fn escape(
                 [0.0, if dy >= 0.0 { 1.0 } else { -1.0 }]
             }
         };
+    // Bent connectors leave even rotated objects on a world cardinal axis.
+    // A diagonal terminal stub would otherwise reintroduce a slanted portion.
+    let dir = if dir[0].abs() >= dir[1].abs() {
+        [dir[0].signum(), 0.0]
+    } else {
+        [0.0, dir[1].signum()]
+    };
     let mut distance = f32::INFINITY;
     for axis in 0..2 {
         if dir[axis].abs() > EPS {
@@ -278,7 +285,10 @@ impl WhiteboardView {
             .filter_map(|e| {
                 if matches!(
                     e.kind,
-                    ElementKind::Line(_) | ElementKind::Arrow(_) | ElementKind::Draw(_)
+                    ElementKind::Line(_)
+                        | ElementKind::Arrow(_)
+                        | ElementKind::Draw(_)
+                        | ElementKind::Frame(_)
                 ) {
                     return None;
                 }
@@ -311,6 +321,7 @@ impl WhiteboardView {
                 };
                 e.id.hash(&mut hash);
                 seg.auto_route.hash(&mut hash);
+                seg.manual_polyline.hash(&mut hash);
                 seg.connector_type.hash(&mut hash);
                 for v in [seg.x1, seg.y1, seg.x2, seg.y2, seg.width] {
                     v.to_bits().hash(&mut hash);

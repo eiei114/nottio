@@ -35,6 +35,15 @@ impl Scene {
         if !scene.camera.zoom.is_finite() || scene.camera.zoom <= 0.0 {
             scene.camera.zoom = 1.0;
         }
+        for element in &mut scene.elements {
+            if let ElementKind::Arrow(seg) | ElementKind::Line(seg) = &mut element.kind
+                && seg.connector_type == ConnectorType::Bent
+                && seg.manual_polyline
+            {
+                let path = seg.elbow_points();
+                seg.set_manual_path(&path);
+            }
+        }
         scene
     }
 
@@ -366,6 +375,8 @@ pub enum ElementKind {
     /// A sticky note, distinct from shapes in the persisted scene. Its text
     /// lives in Element::label and moves with the note rather than a text node.
     Sticky(BoxGeom),
+    /// Background section. Objects with positive overlap move with this frame.
+    Frame(BoxGeom),
     Star(BoxGeom),
     Hexagon(BoxGeom),
     Line(SegGeom),
@@ -446,6 +457,20 @@ pub struct BoxGeom {
 }
 
 impl Element {
+    pub fn frame(id: u64, mut bounds: BoxGeom) -> Self {
+        bounds.rotation = 0.0;
+        bounds.width = 1.5;
+        Self {
+            id,
+            kind: ElementKind::Frame(bounds),
+            stroke: Some(0x7789ABFF),
+            fill: Some(0x9BB2E01A),
+            label: Some("フレーム".into()),
+            label_color: None,
+            styles: Vec::new(),
+            mindmap: None,
+        }
+    }
     /// Default-sized sticky, centred at a world-space point. Size is independent
     /// of zoom; colours are explicit so notes stay readable in either theme.
     pub fn sticky(id: u64, center: [f32; 2]) -> Self {
@@ -499,6 +524,9 @@ pub struct SegGeom {
     /// Additional ordered manual handles. `bend` remains the first for old JSON.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_bends: Option<RoutePath>,
+    /// Manual handles represent exact polyline vertices after portion editing.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub manual_polyline: bool,
     /// None preserves legacy behaviour: arrows have an end head, lines no heads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heads: Option<ArrowHeads>,
@@ -584,6 +612,7 @@ impl SegGeom {
             end_anchor: None,
             bend: None,
             extra_bends: None,
+            manual_polyline: false,
             heads: None,
             connector_type: ConnectorType::Bent,
             auto_route: true,
@@ -611,7 +640,9 @@ impl SegGeom {
     }
 
     pub fn has_manual_bends(&self) -> bool {
-        self.bend.is_some() || self.extra_bends.is_some_and(|p| !p.as_slice().is_empty())
+        self.manual_polyline
+            || self.bend.is_some()
+            || self.extra_bends.is_some_and(|p| !p.as_slice().is_empty())
     }
 
     pub fn set_manual_bends(&mut self, bends: &[[f32; 2]]) -> bool {
@@ -619,13 +650,66 @@ impl SegGeom {
             return false;
         }
         self.bend = bends.first().copied();
+        self.manual_polyline = false;
         self.extra_bends = if bends.len() > 1 {
             RoutePath::new(&bends[1..])
         } else {
             None
         };
         self.route = None;
+        self.route_failed = false;
         true
+    }
+
+    pub fn set_manual_path(&mut self, path: &[[f32; 2]]) -> bool {
+        let path = connector_edit::orthogonal_path(
+            path.to_vec(),
+            self.start_anchor.map(|a| a.connector % 2 == 1),
+            self.end_anchor.map(|a| a.connector % 2 == 1),
+        );
+        if path.len() < 2 || !self.set_manual_bends(&path[1..path.len() - 1]) {
+            return false;
+        }
+        self.manual_polyline = true;
+        self.auto_route = false;
+        self.connector_type = ConnectorType::Bent;
+        true
+    }
+
+    pub fn move_endpoint(&mut self, which: usize, pos: [f32; 2]) {
+        let mut path = self
+            .manual_polyline
+            .then(|| self.elbow_points())
+            .filter(|p| p.len() >= 2);
+        if self.manual_polyline && path.is_none() {
+            self.manual_polyline = false;
+        }
+        if let Some(path) = path.as_mut() {
+            let (endpoint, adjacent) = if which == 0 {
+                (0, 1)
+            } else {
+                (path.len() - 1, path.len() - 2)
+            };
+            let old = path[endpoint];
+            if (old[1] - path[adjacent][1]).abs() < 0.01 {
+                path[adjacent][1] = pos[1];
+            } else if (old[0] - path[adjacent][0]).abs() < 0.01 {
+                path[adjacent][0] = pos[0];
+            }
+            path[endpoint] = pos;
+        }
+        if which == 0 {
+            [self.x1, self.y1] = pos;
+        } else {
+            [self.x2, self.y2] = pos;
+        }
+        if let Some(path) = path {
+            if path.len() > 2 {
+                self.set_manual_path(&path);
+            } else {
+                self.manual_polyline = false;
+            }
+        }
     }
 
     pub fn bend_handles(&self) -> Vec<[f32; 2]> {
@@ -693,7 +777,23 @@ impl SegGeom {
                 })
                 .collect();
         }
-        let mut points = vec![[self.x1, self.y1]];
+        rounded_corners(self.elbow_points())
+    }
+
+    /// Sharp geometry for editing portions, independent of corner tessellation.
+    pub fn elbow_points(&self) -> Vec<[f32; 2]> {
+        let start = [self.x1, self.y1];
+        let end = [self.x2, self.y2];
+        let mut points = vec![start];
+        if self.manual_polyline {
+            points.extend(self.manual_bends());
+            points.push(end);
+            return connector_edit::orthogonal_path(
+                points,
+                self.start_anchor.map(|a| a.connector % 2 == 1),
+                self.end_anchor.map(|a| a.connector % 2 == 1),
+            );
+        }
         if self.has_manual_bends() {
             let stub = |p: [f32; 2], other: [f32; 2], anchor: Option<SegmentAnchor>| {
                 let direction = anchor
@@ -738,7 +838,11 @@ impl SegGeom {
             points.extend([[middle_x, self.y1], [middle_x, self.y2]]);
         }
         points.push([self.x2, self.y2]);
-        rounded_corners(points)
+        connector_edit::orthogonal_path(
+            points,
+            self.start_anchor.map(|a| a.connector % 2 == 1),
+            self.end_anchor.map(|a| a.connector % 2 == 1),
+        )
     }
 }
 

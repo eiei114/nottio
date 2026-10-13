@@ -2855,9 +2855,11 @@ dependencies = [
 name = "nottio"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "gpui-pre",
  "gpui-pre-platform",
  "gpui-whiteboard",
+ "image",
  "serde_json",
 ]
 

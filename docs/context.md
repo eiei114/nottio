@@ -14,9 +14,19 @@ there is no server, account system, collaboration service or web frontend.
   Bindings store stable element IDs and a side index and follow object movement.
 - **Connector type**: straight, bent (orthogonal legs with rounded corners), or
   curved (sampled quadratic). Stored independently of solid/dashed stroke style.
-- **Bend**: an ordered user-positioned path handle, shown on selection. Bent
-  connectors support up to 33 independent handles, connected by orthogonal legs.
+- **Portion**: a sharp bent-path segment between consecutive vertices. Its middle
+  handle moves perpendicular to that segment. Dragging terminal portions inserts
+  doglegs while endpoints remain fixed; redundant vertices collapse on release.
+- **Manual polyline**: a portion-edited path. `manual_polyline: true` makes `bend`
+  and `extra_bends` exact inner vertices, not the older waypoint-control model.
+  Up to 33 inner vertices are persisted. Legacy waypoint documents still load.
   Curved connectors expose one on-path handle, not cubic control points.
+- **Frame / Section**: a background `ElementKind::Frame(BoxGeom)` with a title
+  above its top edge. Membership derives from positive overlap; notes/shapes use
+  bounds and strokes use actual path intersection. No clipping or parent IDs.
+- **Frame drag snapshot**: frozen follower IDs expanded from the selected frame
+  at mouse-down. Capturing only once prevents scooping up unrelated objects while
+  crossing them. Outside connector anchors remain attached when the group moves.
 - **Auto route**: derived orthogonal detour around the padded bounds of board
   objects. Recomputed on object movement, not on camera changes. Manual bends
   override it; only bent connectors auto-route. Arrow-to-arrow crossing avoidance
@@ -24,6 +34,9 @@ there is no server, account system, collaboration service or web frontend.
 - **Arrowhead**: independently enabled start/end markers. Geometry direction
   does not need reversing to show a start head instead of an end head.
 - **Working board**: autosaved local JSON; export/import are explicit file actions.
+- **Clipboard image**: a separate `ElementKind::Image` with an embedded PNG
+  `data:image/png;base64,` source. Owns its durable pixels rather than a temp path;
+  movement, resizing, quarter-turn rotation and frame membership reuse box logic.
 
 ## Ownership and boundaries
 
@@ -54,8 +67,31 @@ camera. Search limits are 64 objects, 4096 grid nodes and 32 intermediate points
 an unavailable route shows a toolbar warning instead of claiming safe avoidance.
 
 The official behavior reference and intentional differences are documented in
-`figjam-connector-reference.md`. None/Solid heads and ordered manual bends are the
-current subset; richer endpoint styles and separate per-section translation
-handles are deferred. `bend` stores the first handle for backwards compatibility;
-`extra_bends` stores additional handles as a compact JSON array. They are document
-data, unlike the derived automatic route cache.
+`figjam-connector-reference.md`. None/Solid heads and portion translation handles
+are the current subset; richer endpoint styles are deferred. `bend` stores the
+first vertex for backwards compatibility;
+`extra_bends` stores more as a compact array. Portion translation handles are now
+implemented, superseding the earlier add/remove-fold toolbar. These vertices are
+document data, unlike the derived automatic route cache.
+
+`frame.rs` owns overlap membership and selection expansion. Frames are always
+background layers and are excluded from connector obstacles/attachment targets.
+Their title is editable, bounds resizable and group movement undoable. Overlapping
+frames choose the smallest owner, then frontmost on ties. Frames do not nest;
+resizing does not scale children; deleting/copying a frame acts on its boundary
+only. Saved geometry deterministically restores membership without extra IDs.
+
+Bent sharp paths are normalized to cardinal legs on load and before manual-path
+storage. Rendering also enforces this invariant after group transforms. Rotated
+terminal exit directions choose a world cardinal axis. Direct bent rotation is
+disabled, and the initial board tool is Select. Rounded corners are unchanged.
+
+`src/images.rs` owns bounded raster decoding, EXIF orientation, PNG normalization
+and an encoded quarter-turn LRU (128 MiB). GPUI handles asynchronous image upload.
+Clipboard JSON is tried first, then `PasteImageFn` returns durable pixels and
+dimensions; the board creates/selects the image and emits its ordinary save hook.
+The host's `ImageFn` renders only embedded PNG sources: no arbitrary network or
+file access. 32 MiB input/output, 8192px sides and 16M pixels bound each image.
+Raster normalization uses the first frame, not animation. No image file-picker,
+Explorer path paste or SVG import is wired. Images travel with board export and
+selection copy; many images therefore increase JSON and undo-snapshot sizes.

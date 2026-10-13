@@ -746,6 +746,7 @@ pub(crate) fn paint_element(
         }
         ElementKind::RoundRect(b) => paint_round_rect(b, cam, origin, ink, fill, window),
         ElementKind::Sticky(b) => paint_rect(b, cam, origin, ink, fill, window),
+        ElementKind::Frame(b) => paint_rect(b, cam, origin, ink, fill, window),
         ElementKind::Star(b) => paint_box_polygon(b, &star_unit(), cam, origin, ink, fill, window),
         ElementKind::Hexagon(b) => {
             paint_box_polygon(b, &hexagon_unit(), cam, origin, ink, fill, window)

@@ -21,18 +21,35 @@ FigJam replacement or a production-hardened release.
   edit its text. Text is centred, wrapped, and shrunk to fit the note.
 - Shapes: rectangle, rounded rectangle, ellipse, diamond, triangle, star,
   hexagon; freehand pen, straight lines, arrows.
+- **Paste images**: copy a screenshot or raster image, focus the canvas, then
+  **Ctrl+V** (or right-click → Paste). It becomes a selected image object,
+  initially 280 screen pixels on its longest edge. Drag to move; use selection
+  handles to resize. Images also follow overlapping frames and support undo/redo.
+  PNG bytes are embedded in the JSON, so reopen, Save a copy and image-object
+  copy/paste retain the image without separate files. While editing text, Ctrl+V
+  remains text paste; finish editing with Escape before pasting an image.
 - With the Arrow tool (A), drag from one sticky/shape body to another to connect
   their facing sides. Arrows and lines also **snap to connector points** and stay
   attached when the object moves, resizes or rotates. Select an endpoint and drag
   it to another object's body or side to reconnect it.
 - The selected connector's **直線 / 折れ線 / 曲線** buttons switch between a direct
   line, orthogonal legs with rounded corners, and a smooth quadratic curve.
-- Select an arrow/line and drag its **middle circular handle** to make a bend.
-  **＋ 折り目** adds more independently draggable handles to a bent connector
-  (up to 33). Double-click a handle to remove that fold; **− 折り目** removes the
-  last one. Removing the only handle straightens the connector. **直線** clears
-  every manual fold. Shift-drag snaps a handle to the grid. Curved mode has one
-  on-path handle; returning to bent mode retains the additional saved handles.
+  Bent paths never use diagonal sharp legs, including old manual paths loaded
+  from disk. Their direct rotation handle is disabled; straight/curved remain
+  explicit alternatives. The board opens in Select mode, ready to move objects.
+- Select a bent connector and **drag a portion's middle handle**. Horizontal
+  portions move vertically, vertical portions move horizontally. Dragging an end
+  portion automatically adds folds while keeping the attached endpoint fixed.
+  Move portions back into alignment to collapse unnecessary folds. No add/remove
+  fold buttons. Shift snaps the portion to the grid. Curves retain one on-path
+  handle; straight connectors expose endpoint handles, not bending handles.
+- **Frames / Sections**: use the frame icon beside Sticky, or **Shift+S**. Click
+  the canvas for a 400 × 400 square, or drag to draw a custom frame over existing
+  objects. Any positive overlap groups notes/shapes; crossing lines are included
+  by their actual stroke path. Drag the frame's header or empty background to
+  move its contents together. Moving an object fully outside releases it.
+  Double-click the name and press Enter to rename. Resizing changes the boundary,
+  not the contents' size. Frames always remain behind their contents.
 - The selected connector's toolbar has **← 始点** and **終点 →** toggles.
   Add/remove arrowheads independently: no heads, either end, or both ends.
   Bends, heads, text and endpoint bindings persist with the board and undo/redo.
@@ -68,7 +85,7 @@ Tool shortcuts are single keys, active whenever the canvas has focus:
 | Key | Tool | Key | Tool |
 | --- | --- | --- | --- |
 | `H` | Pan | `S` | Star |
-| `V` | Select | `X` | Hexagon |
+| `V` | Select | `J` | Hexagon |
 | `P` | Pen | `L` | Line |
 | `R` | Rectangle | `A` | Arrow |
 | `O` | Ellipse | `T` | Text |
@@ -77,10 +94,22 @@ Tool shortcuts are single keys, active whenever the canvas has focus:
 | `U` | Rounded rectangle | | |
 | `N` | Sticky note | | |
 
+`X` / `Shift+L`: bent connector. `Shift+S`: frame/section. `V` / Escape exits
+connector creation. Ctrl bypasses endpoint snapping during connector gestures;
+Ctrl-drag elsewhere still pans. Alt additionally grid-snaps a detached endpoint.
+
 `Ctrl+Z` / `Ctrl+Shift+Z` undo and redo; `Ctrl+C` / `Ctrl+X` / `Ctrl+V` copy,
-cut and paste elements; `Ctrl+]` / `Ctrl+[` change z-order; `Ctrl+B` / `Ctrl+I`
+cut and paste elements (Ctrl+V also pastes clipboard images); `Ctrl+]` / `Ctrl+[` change z-order; `Ctrl+B` / `Ctrl+I`
 / `Ctrl+U` / `Ctrl+Shift+X` / `Ctrl+Shift+H` apply bold, italic, underline,
 strikethrough and highlight to text.
+
+Image paste accepts raster bitmap entries exposed by GPUI's Windows clipboard
+reader (including PNG, JPEG and CF_DIB/BMP). It normalizes to a static PNG and
+preserves transparency where the source contains it. Limits: 32 MiB encoded
+input/output, 8192 pixels per side, 16 million pixels. SVG, animation and Explorer
+file-path paste are not supported. Imported external image URLs/files are not
+loaded. Invalid images show an error without changing the board. Large images
+increase JSON size because the board is self-contained.
 
 Drag the toolbar's grip to move it, double-click the grip to reset it, and use
 the grip's other affordance to flip it between a row and a column.
@@ -152,6 +181,14 @@ orthogonal grid search, prefers fewer corners, and retains the endpoint anchors.
 Overlapping terminal objects or search-capacity limits can make a route
 unavailable; **迂回 !** then indicates fallback. Move the conflicting objects or
 use a manual bend. Existing mind-map Bezier/orthogonal styles remain unchanged.
+
+Frame membership is derived from overlap and frozen during a frame drag. Objects
+crossed while dragging are not picked up mid-gesture; membership is reevaluated
+on the next grab. Overlapping frames use the smallest frame, then the frontmost
+on ties. Nested frames are not supported. Deleting a frame leaves its objects;
+frame-only copy/export does not implicitly include its contents. Connections to
+objects outside a moving frame retain their external attachment instead of
+being detached. This is a local section prototype, not every FigJam feature.
 
 See [local patch notes](vendor/gpui-whiteboard/nottio-patches.md) for the schema
 and licensing. Unpatched upstream 0.5.1 cannot read the new `sticky` variant.

@@ -16,6 +16,11 @@ gpui = { package = "gpui-pre", version = "=0.3.9" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9" }
 gpui-whiteboard = { path = "vendor/gpui-whiteboard" }
 serde_json = "1"
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "webp", "tiff", "ico", "pnm"] }
+
+[dev-dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.9", features = ["test-support"] }
 
 [workspace]
 members = ["vendor/gpui-whiteboard"]

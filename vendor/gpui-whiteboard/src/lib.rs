@@ -22,7 +22,9 @@
 //! glyph layouts are cached. A built-`Path` cache remains a further optimization
 //! for extremely dense visible scenes.
 
+mod connector_edit;
 mod font;
+mod frame;
 mod geometry;
 mod input;
 mod paint;
@@ -154,6 +156,7 @@ pub enum Tool {
     Triangle,
     RoundRect,
     Sticky,
+    Frame,
     Star,
     Hexagon,
     Line,
@@ -182,6 +185,7 @@ impl Tool {
             Tool::Triangle => "△",
             Tool::RoundRect => "▢",
             Tool::Sticky => "▧",
+            Tool::Frame => "▣",
             Tool::Star => "☆",
             Tool::Hexagon => "⬡",
             Tool::Line => "╱",
@@ -208,10 +212,11 @@ impl Tool {
             Tool::Triangle => "Triangle (G)",
             Tool::RoundRect => "Rounded rectangle (U)",
             Tool::Sticky => "付箋 / Sticky note (N) — click to place",
+            Tool::Frame => "フレーム / Section (Shift+S) — drag to enclose objects",
             Tool::Star => "Star (S)",
-            Tool::Hexagon => "Hexagon (X)",
+            Tool::Hexagon => "Hexagon (J)",
             Tool::Line => "Line (L)",
-            Tool::Arrow => "Arrow (A)",
+            Tool::Arrow => "Connector (X / Shift+L; A remembers type)",
             Tool::DashedArrow => "Dashed arrow (K)",
             Tool::Text => "Text (T)",
             Tool::MindMap => "Mind map (M)",
@@ -234,7 +239,8 @@ impl Tool {
             "u" => Tool::RoundRect,
             "n" => Tool::Sticky,
             "s" => Tool::Star,
-            "x" => Tool::Hexagon,
+            "j" => Tool::Hexagon,
+            "x" => Tool::Arrow,
             "l" => Tool::Line,
             "a" => Tool::Arrow,
             "k" => Tool::DashedArrow,
@@ -283,6 +289,7 @@ impl Tool {
                 "wb-icon-sticky",
                 include_bytes!("../assets/icons/sticky.svg"),
             )),
+            Tool::Frame => Some(("wb-icon-frame", include_bytes!("../assets/icons/frame.svg"))),
             Tool::Star => Some(("wb-icon-star", STAR)),
             Tool::Hexagon => Some(("wb-icon-hexagon", HEXAGON)),
             Tool::Line => Some(("wb-icon-line", LINE)),
@@ -473,6 +480,10 @@ pub type CopyFn = Rc<dyn Fn(String, &mut Window, &mut App)>;
 /// as [`SaveTemplateFn`]), or `None` if it holds no board elements. Pass the JSON to
 /// [`WhiteboardView::paste_elements`]. (Keyboard ⌘V is handled internally.)
 pub type PasteFn = Rc<dyn Fn(&mut Window, &mut App) -> Option<String>>;
+
+/// Clipboard image fallback after board JSON. Returns a durable source plus
+/// its pixel dimensions. The board owns placement, selection, undo and saving.
+pub type PasteImageFn = Rc<dyn Fn(&mut Window, &mut App) -> Option<(String, f32, f32)>>;
 
 /// Called when the user's saved-color palette changes (a swatch added or removed),
 /// with the full list (packed `0xRRGGBBAA`). The host persists it and feeds it back
@@ -699,6 +710,7 @@ pub struct WhiteboardView {
     on_drop_files: Option<DropFilesFn>,
     on_copy: Option<CopyFn>,
     on_paste: Option<PasteFn>,
+    on_paste_image: Option<PasteImageFn>,
     on_save_colors: Option<SavedColorsFn>,
     on_pick_font: Option<PickFontFn>,
     on_move_toolbar: Option<MoveToolbarFn>,
@@ -729,6 +741,7 @@ pub struct WhiteboardView {
     sticky_drag: Option<Point<Pixels>>,
     sticky_preview: Option<Element>,
     arrow_bend_drag: Option<(u64, usize)>,
+    portion_drag: Option<connector_edit::PortionDrag>,
     route_signature: Option<u64>,
     /// Keyboard focus — grabbed while editing a text element.
     focus: FocusHandle,
@@ -763,6 +776,9 @@ pub struct WhiteboardView {
     /// The primary (first-selected) element's top-left at move-grab, the
     /// reference the move drives toward (`move_origin + total_delta`).
     move_origin: [f32; 2],
+    /// Freeze section membership at grab time; selection still contains only
+    /// the frame so its bounds and name remain the primary editing affordance.
+    move_ids: Vec<u64>,
     /// Whether the current move-drag has actually moved (undo is pushed once).
     moved: bool,
     /// Active world-space smart-alignment guides while moving a selection.
@@ -875,6 +891,7 @@ impl WhiteboardView {
             on_drop_files: None,
             on_copy: None,
             on_paste: None,
+            on_paste_image: None,
             on_save_colors: None,
             on_pick_font: None,
             on_move_toolbar: None,
@@ -886,11 +903,12 @@ impl WhiteboardView {
             font: Font::default(),
             text_layout_cache: HashMap::new(),
             label_layout_cache: HashMap::new(),
-            tool: Tool::Pan,
+            tool: Tool::Select,
             active_connector_type: ConnectorType::Bent,
             sticky_drag: None,
             sticky_preview: None,
             arrow_bend_drag: None,
+            portion_drag: None,
             route_signature: None,
             focus: cx.focus_handle(),
             editing: None,
@@ -906,6 +924,7 @@ impl WhiteboardView {
             connecting: None,
             drag_from: None,
             move_origin: [0.0, 0.0],
+            move_ids: Vec::new(),
             moved: false,
             alignment_guides: AlignmentGuides::default(),
             resizing: None,
@@ -1001,6 +1020,10 @@ impl WhiteboardView {
     /// clipboard). Without it, the Paste menu item is hidden.
     pub fn set_on_paste(&mut self, f: PasteFn) {
         self.on_paste = Some(f);
+    }
+
+    pub fn set_on_paste_image(&mut self, f: PasteImageFn) {
+        self.on_paste_image = Some(f);
     }
 
     /// Install the saved-colors hook (the palette changed → host persists it).
@@ -1455,6 +1478,7 @@ impl WhiteboardView {
                     end_anchor: Some(end_anchor),
                     bend: None,
                     extra_bends: None,
+                    manual_polyline: false,
                     heads: None,
                     connector_type: ConnectorType::Bent,
                     auto_route: true,
@@ -1574,6 +1598,7 @@ impl WhiteboardView {
                     end_anchor: Some(end_anchor),
                     bend: None,
                     extra_bends: None,
+                    manual_polyline: false,
                     heads: None,
                     connector_type: ConnectorType::Bent,
                     auto_route: true,
@@ -2208,6 +2233,7 @@ impl WhiteboardView {
                 end_anchor: Some(end_anchor),
                 bend: None,
                 extra_bends: None,
+                manual_polyline: false,
                 heads: None,
                 connector_type: ConnectorType::Bent,
                 auto_route: true,
@@ -2462,12 +2488,9 @@ impl WhiteboardView {
         let mut best_x: Option<(f32, f32)> = None;
         let mut best_y: Option<(f32, f32)> = None;
 
-        for element in self
-            .scene
-            .elements
-            .iter()
-            .filter(|element| !self.selected.contains(&element.id))
-        {
+        for element in self.scene.elements.iter().filter(|element| {
+            !self.selected.contains(&element.id) && !self.move_ids.contains(&element.id)
+        }) {
             let bb = bbox(&element.kind);
             for moving in moving_x {
                 for target in [bb.0, (bb.0 + bb.2) / 2.0, bb.2] {
@@ -2515,15 +2538,13 @@ impl WhiteboardView {
                 && changed_ids.contains(&anchor.element_id)
                 && let Some(pos) = connector_world_pos_in(&elements, anchor)
             {
-                segment.x1 = pos[0];
-                segment.y1 = pos[1];
+                segment.move_endpoint(0, pos);
             }
             if let Some(anchor) = segment.end_anchor
                 && changed_ids.contains(&anchor.element_id)
                 && let Some(pos) = connector_world_pos_in(&elements, anchor)
             {
-                segment.x2 = pos[0];
-                segment.y2 = pos[1];
+                segment.move_endpoint(1, pos);
             }
         }
     }
@@ -2574,14 +2595,12 @@ impl WhiteboardView {
         if endpoint == 0 {
             segment.start_anchor = anchor;
             if let Some((_, pos)) = pos {
-                segment.x1 = pos[0];
-                segment.y1 = pos[1];
+                segment.move_endpoint(0, pos);
             }
         } else {
             segment.end_anchor = anchor;
             if let Some((_, pos)) = pos {
-                segment.x2 = pos[0];
-                segment.y2 = pos[1];
+                segment.move_endpoint(1, pos);
             }
         }
     }
@@ -2589,6 +2608,14 @@ impl WhiteboardView {
     /// Whether a *group* rotation applies: more than one element selected, at
     /// least one of which can rotate (so an all-cards group offers no grip).
     fn group_rotatable(&self) -> bool {
+        if self
+            .scene
+            .elements
+            .iter()
+            .any(|e| self.selected.contains(&e.id) && matches!(e.kind, ElementKind::Frame(_)))
+        {
+            return false;
+        }
         self.selected.len() > 1
             && self
                 .scene
@@ -3692,7 +3719,11 @@ impl WhiteboardView {
         // Ctrl + left-drag always pans the canvas, regardless of the active tool
         // or what's under the pointer. Reuses the same panning state as the Pan
         // tool and middle-button drag.
-        if ev.modifiers.control {
+        let endpoint_grab = matches!(self.handle_hit(ev.position), Some(HandleGrab::Endpoint(_)));
+        if ev.modifiers.control
+            && !endpoint_grab
+            && !matches!(self.tool, Tool::Arrow | Tool::DashedArrow | Tool::Line)
+        {
             self.panning = true;
             self.last = ev.position;
             return;
@@ -3807,7 +3838,7 @@ impl WhiteboardView {
         // a drawing/text tool is currently active. This prevents accidentally
         // drawing over a shape when the user only meant to select it. A second
         // click (handled above) is the sole path into text/label editing.
-        if self.tool != Tool::Select {
+        if self.tool != Tool::Select && self.tool != Tool::Frame {
             let pad = SELECT_PAD / zoom;
             let hit = self
                 .scene
@@ -3930,6 +3961,7 @@ impl WhiteboardView {
                         end_anchor: None,
                         bend: None,
                         extra_bends: None,
+                        manual_polyline: false,
                         heads: None,
                         connector_type: ConnectorType::Bent,
                         auto_route: true,
@@ -3996,6 +4028,39 @@ impl WhiteboardView {
                 cx.notify();
                 return;
             }
+            // A selected bent connector is edited by portions, not by moving
+            // the entire attached arrow. Endpoint handles above take priority.
+            if !ev.modifiers.shift
+                && let Some(id) = self.selected_single()
+                && let Some(element) = self.scene.elements.iter().find(|e| e.id == id)
+                && let ElementKind::Arrow(seg) | ElementKind::Line(seg) = element.kind
+                && seg.connector_type == ConnectorType::Bent
+                && hit_test(&element.kind, p[0], p[1], SELECT_PAD / zoom)
+            {
+                let path = seg.elbow_points();
+                let index = path
+                    .windows(2)
+                    .enumerate()
+                    .min_by(|(_, a), (_, b)| {
+                        let distance = |pair: &[[f32; 2]]| {
+                            let d = [pair[1][0] - pair[0][0], pair[1][1] - pair[0][1]];
+                            let len = d[0] * d[0] + d[1] * d[1];
+                            let t = if len > 0.0 {
+                                ((p[0] - pair[0][0]) * d[0] + (p[1] - pair[0][1]) * d[1]) / len
+                            } else {
+                                0.0
+                            }
+                            .clamp(0.0, 1.0);
+                            (p[0] - pair[0][0] - t * d[0]).hypot(p[1] - pair[0][1] - t * d[1])
+                        };
+                        distance(a).total_cmp(&distance(b))
+                    })
+                    .map(|(i, _)| i);
+                if let Some(index) = index {
+                    self.begin_portion_drag(id, index, ev.position, window, cx);
+                    return;
+                }
+            }
             // Otherwise hit-test topmost-first.
             let pad = SELECT_PAD / zoom;
             let hit = self
@@ -4023,6 +4088,7 @@ impl WhiteboardView {
                         self.selected = vec![id];
                     }
                     self.drag_from = Some(p);
+                    self.move_ids = frame::expand_selection(&self.scene, &self.selected);
                     // Capture the primary element's top-left so the move can drive
                     // an absolute target (and snap it) without drifting.
                     self.move_origin = self
@@ -4073,6 +4139,7 @@ impl WhiteboardView {
                 width,
             }),
             Tool::Rect => ElementKind::Rect(box0),
+            Tool::Frame => ElementKind::Frame(box0),
             Tool::Ellipse => ElementKind::Ellipse(box0),
             Tool::Diamond => ElementKind::Diamond(box0),
             Tool::Triangle => ElementKind::Triangle(box0),
@@ -4090,6 +4157,7 @@ impl WhiteboardView {
                 end_anchor: None,
                 bend: None,
                 extra_bends: None,
+                manual_polyline: false,
                 heads: None,
                 connector_type: ConnectorType::Straight,
                 auto_route: false,
@@ -4107,6 +4175,7 @@ impl WhiteboardView {
                 end_anchor: None,
                 bend: None,
                 extra_bends: None,
+                manual_polyline: false,
                 heads: None,
                 connector_type: ConnectorType::Bent,
                 auto_route: true,
@@ -4124,6 +4193,7 @@ impl WhiteboardView {
                 end_anchor: None,
                 bend: None,
                 extra_bends: None,
+                manual_polyline: false,
                 heads: None,
                 connector_type: ConnectorType::Bent,
                 auto_route: true,
@@ -4162,6 +4232,10 @@ impl WhiteboardView {
     }
 
     fn on_left_up(&mut self, ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.portion_drag.is_some() {
+            self.finish_portion_drag(window, cx);
+            return;
+        }
         if self.arrow_bend_drag.take().is_some() {
             self.flush(window, cx);
             cx.notify();
@@ -4219,6 +4293,7 @@ impl WhiteboardView {
                 self.dirty = true;
             }
             self.moved = false;
+            self.move_ids.clear();
             self.alignment_guides = AlignmentGuides::default();
             cx.notify();
             self.flush(window, cx);
@@ -4238,8 +4313,17 @@ impl WhiteboardView {
             cx.notify();
             return;
         }
-        if let Some(pending) = self.pending.take() {
+        if let Some(mut pending) = self.pending.take() {
             let completed_connection = self.connecting.take().is_some();
+            if let ElementKind::Frame(bounds) = &mut pending.kind {
+                if bounds.w < 3.0 && bounds.h < 3.0 {
+                    bounds.w = 400.0;
+                    bounds.h = 400.0;
+                } else {
+                    bounds.w = bounds.w.max(24.0);
+                    bounds.h = bounds.h.max(24.0);
+                }
+            }
             if committable(&pending.kind) {
                 self.push_undo();
                 let id = self.next_id;
@@ -4250,7 +4334,7 @@ impl WhiteboardView {
                 } else {
                     None
                 };
-                self.scene.elements.push(Element {
+                let mut element = Element {
                     id,
                     kind: pending.kind,
                     stroke: self.active_stroke,
@@ -4259,7 +4343,14 @@ impl WhiteboardView {
                     label_color: self.active_text,
                     styles: Vec::new(),
                     mindmap: None,
-                });
+                };
+                if let ElementKind::Frame(bounds) = element.kind {
+                    element = Element::frame(id, bounds);
+                    self.selected = vec![id];
+                    self.tool = Tool::Select;
+                    self.focus.focus(window, cx);
+                }
+                self.scene.elements.push(element);
                 if completed_connection {
                     // The newly-created connector becomes the active object so
                     // its endpoints can be adjusted immediately.
@@ -4288,7 +4379,7 @@ impl WhiteboardView {
         }
         // Show the menu when there's a selection (copy / cut / z-order / save) or
         // paste is wired (so you can paste onto empty canvas). Positioned at the click.
-        if self.selected.is_empty() && self.on_paste.is_none() {
+        if self.selected.is_empty() && self.on_paste.is_none() && self.on_paste_image.is_none() {
             self.context_menu = None;
         } else {
             let b = self.bounds.get();
@@ -4309,6 +4400,18 @@ impl WhiteboardView {
             && let Some(json) = f(window, cx)
         {
             self.paste_elements(&json, window, cx);
+            true
+        } else if let Some(f) = self.on_paste_image.clone()
+            && let Some((src, width, height)) = f(window, cx)
+            && width.is_finite()
+            && height.is_finite()
+            && width > 0.0
+            && height > 0.0
+        {
+            let [x, y] = self.viewport_center();
+            self.add_image_at(src, width, height, x, y, cx);
+            self.dirty = true;
+            self.flush(window, cx);
             true
         } else {
             false
@@ -4332,6 +4435,7 @@ impl WhiteboardView {
             || self.resizing.is_some()
             || self.group_resizing.is_some()
             || self.endpoint.is_some()
+            || self.portion_drag.is_some()
             || self.rotating.is_some()
             || self.picker_drag.is_some()
             || self.marquee.is_some()
@@ -4351,6 +4455,44 @@ impl WhiteboardView {
     }
 
     fn on_move(&mut self, ev: &MouseMoveEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(drag) = self.portion_drag.as_ref() {
+            if ev.pressed_button != Some(MouseButton::Left) {
+                self.finish_portion_drag(_window, cx);
+                return;
+            }
+            let cur = self.event_to_world(ev.position);
+            let axis =
+                if connector_edit::horizontal(drag.path[drag.index], drag.path[drag.index + 1]) {
+                    1
+                } else {
+                    0
+                };
+            let mut delta = cur[axis] - drag.from[axis];
+            if ev.modifiers.shift {
+                delta =
+                    snap_grid(drag.path[drag.index][axis] + delta) - drag.path[drag.index][axis];
+            }
+            if !drag.started && delta.abs() * self.scene.camera.zoom < 3.0 {
+                return;
+            }
+            let path = connector_edit::drag_portion(&drag.path, drag.index, delta);
+            if path.len() > 35 {
+                return;
+            }
+            let id = drag.id;
+            if !drag.started {
+                self.push_undo();
+                self.portion_drag.as_mut().unwrap().started = true;
+            }
+            if let Some(element) = self.scene.elements.iter_mut().find(|e| e.id == id)
+                && let ElementKind::Arrow(seg) | ElementKind::Line(seg) = &mut element.kind
+            {
+                seg.set_manual_path(&path);
+                self.dirty = true;
+            }
+            cx.notify();
+            return;
+        }
         if let Some((id, index)) = self.arrow_bend_drag {
             if ev.pressed_button != Some(MouseButton::Left) {
                 self.arrow_bend_drag = None;
@@ -4445,7 +4587,7 @@ impl WhiteboardView {
                     self.connecting = Some(conn);
                 }
             }
-            let target = if ev.modifiers.alt {
+            let target = if ev.modifiers.alt || ev.modifiers.control {
                 None
             } else {
                 self.connector_snap_from(ev.position, conn.from.id, conn.from.pos)
@@ -4668,16 +4810,14 @@ impl WhiteboardView {
                     (cur[0], cur[1])
                 };
                 if ep.which == 0 {
-                    s.x1 = nx;
-                    s.y1 = ny;
+                    s.move_endpoint(0, [nx, ny]);
                     s.start_anchor = None;
                 } else {
-                    s.x2 = nx;
-                    s.y2 = ny;
+                    s.move_endpoint(1, [nx, ny]);
                     s.end_anchor = None;
                 }
             }
-            if !ev.modifiers.shift && !ev.modifiers.alt {
+            if !ev.modifiers.shift && !ev.modifiers.alt && !ev.modifiers.control {
                 if let Some((target, snapped)) =
                     self.connector_snap_from(ev.position, ep.id, opposite)
                     && snapped
@@ -4732,14 +4872,33 @@ impl WhiteboardView {
                     self.push_undo();
                     self.moved = true;
                 }
-                let sel = self.selected.clone();
-                self.detach_segment_bindings_for_move(&sel);
+                let sel = self.move_ids.clone();
+                let frame_move = self.scene.elements.iter().any(|e| {
+                    self.selected.contains(&e.id) && matches!(e.kind, ElementKind::Frame(_))
+                });
+                if !frame_move {
+                    self.detach_segment_bindings_for_move(&sel);
+                }
                 for e in self.scene.elements.iter_mut() {
                     if sel.contains(&e.id) {
                         translate(&mut e.kind, dx, dy);
                     }
                 }
-                self.sync_segment_anchors_for(&sel);
+                let mut anchors = sel.clone();
+                if frame_move {
+                    for e in &self.scene.elements {
+                        if sel.contains(&e.id)
+                            && let ElementKind::Arrow(s) | ElementKind::Line(s) = e.kind
+                        {
+                            for anchor in [s.start_anchor, s.end_anchor].into_iter().flatten() {
+                                if !anchors.contains(&anchor.element_id) {
+                                    anchors.push(anchor.element_id);
+                                }
+                            }
+                        }
+                    }
+                }
+                self.sync_segment_anchors_for(&anchors);
                 cx.notify();
             }
             return;
@@ -4758,6 +4917,7 @@ impl WhiteboardView {
             let snap = self.pending.as_ref().and_then(|pending| {
                 if matches!(pending.kind, ElementKind::Line(_) | ElementKind::Arrow(_))
                     && !ev.modifiers.alt
+                    && !ev.modifiers.control
                 {
                     self.connector_snap_from(ev.position, u64::MAX, pending.anchor)
                         .filter(|(_, snapped)| *snapped)
@@ -4792,6 +4952,7 @@ impl WhiteboardView {
                 | ElementKind::Triangle(b)
                 | ElementKind::RoundRect(b)
                 | ElementKind::Sticky(b)
+                | ElementKind::Frame(b)
                 | ElementKind::Star(b)
                 | ElementKind::Hexagon(b) => {
                     b.x = anchor[0].min(c[0]);
@@ -5194,6 +5355,16 @@ impl WhiteboardView {
         // let GPUI's native input path insert the same command a second time.
         cx.stop_propagation();
         let cmd = ks.modifiers.platform || ks.modifiers.control;
+        if ks.key == "enter"
+            && self
+                .scene
+                .elements
+                .iter()
+                .any(|e| e.id == id && matches!(e.kind, ElementKind::Frame(_)))
+        {
+            self.commit_text(window, cx);
+            return;
+        }
         let shift = ks.modifiers.shift;
 
         if ks.key == "escape" {
@@ -5318,6 +5489,9 @@ impl WhiteboardView {
             .iter()
             .find(|e| e.id == id)
             .is_some_and(|e| {
+                if let ElementKind::Frame(b) = e.kind {
+                    return p[0] >= b.x && p[0] <= b.x + b.w && p[1] >= b.y - 28.0 && p[1] <= b.y;
+                }
                 let (x0, y0, x1, y1) = bbox(&e.kind);
                 p[0] >= x0 - pad && p[0] <= x1 + pad && p[1] >= y0 - pad && p[1] <= y1 + pad
             })
@@ -5446,13 +5620,23 @@ impl WhiteboardView {
         if cmd || ks.modifiers.alt {
             return false;
         }
+        if ks.key == "s" && ks.modifiers.shift {
+            self.set_tool(Tool::Frame, cx);
+            return true;
+        }
+        if ks.key == "x" || (ks.key == "l" && ks.modifiers.shift) {
+            self.active_connector_type = ConnectorType::Bent;
+            self.set_tool(Tool::Arrow, cx);
+            return true;
+        }
         if let Some(tool) = Tool::shortcut(&ks.key) {
             self.set_tool(tool, cx);
             return true;
         }
         match ks.key.as_str() {
             "backspace" | "delete" => self.delete_selected(window, cx),
-            "escape" if !self.selected.is_empty() => {
+            "escape" => {
+                self.set_tool(Tool::Select, cx);
                 self.selected.clear();
                 cx.notify();
             }
@@ -5464,6 +5648,40 @@ impl WhiteboardView {
     fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.read_only {
             cx.propagate();
+            return;
+        }
+        if ev.keystroke.key == "escape" && self.drag_from.take().is_some() {
+            if self.moved
+                && let Some(previous) = self.history.pop()
+            {
+                self.scene = previous;
+                self.dirty = true;
+                self.flush(window, cx);
+            }
+            self.moved = false;
+            self.move_ids.clear();
+            self.alignment_guides = AlignmentGuides::default();
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        if ev.keystroke.key == "z"
+            && (ev.keystroke.modifiers.control || ev.keystroke.modifiers.platform)
+        {
+            self.portion_drag = None;
+        }
+        if ev.keystroke.key == "escape"
+            && let Some(drag) = self.portion_drag.take()
+        {
+            if drag.started
+                && let Some(previous) = self.history.pop()
+            {
+                self.scene = previous;
+                self.dirty = true;
+                self.flush(window, cx);
+            }
+            cx.stop_propagation();
+            cx.notify();
             return;
         }
         if ev.keystroke.key == "escape" && self.sticky_drag.take().is_some() {
@@ -5554,70 +5772,11 @@ impl WhiteboardView {
         self.set_connector_type(id, ConnectorType::Straight, window, cx);
     }
 
-    fn add_arrow_bend(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(segment) = self
-            .scene
-            .elements
-            .iter()
-            .find(|e| e.id == id)
-            .and_then(|e| match e.kind {
-                ElementKind::Arrow(s) | ElementKind::Line(s) => Some(s),
-                _ => None,
-            })
-        else {
-            return;
-        };
-        let mut bends = if segment.has_manual_bends() {
-            segment.manual_bends()
-        } else {
-            segment.bend_handles()
-        };
-        if bends.len() >= 33 {
-            return;
-        }
-        // Split the longest interval in the ordered handle chain. A small
-        // perpendicular offset makes the added fold visible before dragging it.
-        let chain: Vec<_> = std::iter::once([segment.x1, segment.y1])
-            .chain(bends.iter().copied())
-            .chain(std::iter::once([segment.x2, segment.y2]))
-            .collect();
-        let (index, pair) = chain
-            .windows(2)
-            .enumerate()
-            .max_by(|(_, a), (_, b)| {
-                ((a[1][0] - a[0][0]).hypot(a[1][1] - a[0][1]))
-                    .total_cmp(&((b[1][0] - b[0][0]).hypot(b[1][1] - b[0][1])))
-            })
-            .unwrap();
-        let mut added = [
-            (pair[0][0] + pair[1][0]) / 2.0,
-            (pair[0][1] + pair[1][1]) / 2.0,
-        ];
-        if (pair[1][0] - pair[0][0]).abs() >= (pair[1][1] - pair[0][1]).abs() {
-            added[1] -= 24.0;
-        } else {
-            added[0] += 24.0;
-        }
-        bends.insert(index, added);
-        self.push_undo();
-        if let Some(element) = self.scene.elements.iter_mut().find(|e| e.id == id)
-            && let ElementKind::Arrow(seg) | ElementKind::Line(seg) = &mut element.kind
-        {
-            seg.set_manual_bends(&bends);
-            seg.connector_type = ConnectorType::Bent;
-            seg.auto_route = false;
-        }
-        self.active_connector_type = ConnectorType::Bent;
-        self.tool = Tool::Select;
-        self.dirty = true;
-        self.flush(window, cx);
-        cx.notify();
-    }
-
-    fn remove_arrow_bend(
+    fn begin_portion_drag(
         &mut self,
         id: u64,
         index: usize,
+        position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -5633,20 +5792,34 @@ impl WhiteboardView {
         else {
             return;
         };
-        let mut bends = segment.bend_handles();
-        if index >= bends.len() {
+        let path = segment.elbow_points();
+        if index + 1 >= path.len() {
             return;
         }
-        if bends.len() == 1 {
-            self.straighten_arrow(id, window, cx);
+        self.portion_drag = Some(connector_edit::PortionDrag {
+            id,
+            index,
+            path,
+            from: self.event_to_world(position),
+            started: false,
+        });
+        self.focus.focus(window, cx);
+        self.tool = Tool::Select;
+        cx.notify();
+    }
+
+    fn finish_portion_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(drag) = self.portion_drag.take() else {
+            return;
+        };
+        if !drag.started {
+            cx.notify();
             return;
         }
-        bends.remove(index);
-        self.push_undo();
-        if let Some(element) = self.scene.elements.iter_mut().find(|e| e.id == id)
+        if let Some(element) = self.scene.elements.iter_mut().find(|e| e.id == drag.id)
             && let ElementKind::Arrow(seg) | ElementKind::Line(seg) = &mut element.kind
         {
-            seg.set_manual_bends(&bends);
+            seg.set_manual_path(&seg.elbow_points());
         }
         self.dirty = true;
         self.flush(window, cx);
@@ -5667,7 +5840,9 @@ impl WhiteboardView {
         {
             seg.connector_type = kind;
             seg.auto_route = kind == ConnectorType::Bent;
-            if kind == ConnectorType::Straight {
+            if kind == ConnectorType::Straight
+                || (kind == ConnectorType::Curved && seg.manual_polyline)
+            {
                 seg.set_manual_bends(&[]);
             }
             seg.route = None;
@@ -5943,6 +6118,14 @@ fn shape_label_block(
     bh: f32,
     label: &str,
 ) -> LabelBlock {
+    if matches!(kind, ElementKind::Frame(_)) {
+        return LabelBlock {
+            x: bx + 8.0,
+            y: by - 24.0,
+            size: 16.0,
+            wrap: (bw - 16.0).max(1.0),
+        };
+    }
     // The label wraps + shrinks to fit the shape's *inscribed rectangle* (a
     // fraction of the bounding box), not the box itself — so text never crosses a
     // slanted / round outline. Largest centered inscribed rect: ellipse 1/√2 each
@@ -6057,6 +6240,11 @@ impl WhiteboardView {
 
 impl Render for WhiteboardView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Sections always stay behind their content, including after paste,
+        // import and z-order operations. Stable sort preserves content order.
+        self.scene
+            .elements
+            .sort_by_key(|e| !matches!(e.kind, ElementKind::Frame(_)));
         self.update_routes();
         if self.read_only {
             return self.render_read_only(window, cx);
@@ -6228,16 +6416,14 @@ impl Render for WhiteboardView {
                         .overflow_hidden()
                         .rounded(px(2.0));
                     let el = match img_sources.get(&id) {
-                        // Set only the width and let gpui derive the height from the
-                        // bitmap's aspect (its `Img` forces an `aspect_ratio` from the
-                        // image, then ignores it unless a dimension is `Auto` — so
-                        // `size_full` makes it overflow the box and clip). The bitmap is
-                        // pre-rotated to the box's quarter-turn aspect, so width alone
-                        // reproduces the rotated AABB exactly. `Contain` guards rounding.
+                        // Explicit pixel dimensions match the editable box even
+                        // after a nonuniform edge resize. The host pre-rotates the
+                        // bitmap; Fill avoids cropping it to its original aspect.
                         Some(src) => frame.child(
                             gpui::img(src.clone())
                                 .w(px(bw * zoom))
-                                .object_fit(ObjectFit::Contain),
+                                .h(px(bh * zoom))
+                                .object_fit(ObjectFit::Fill),
                         ),
                         None => frame
                             .bg(panel)
@@ -6412,17 +6598,37 @@ impl Render for WhiteboardView {
         let bend_handles: Vec<_> = selected_segment
             .into_iter()
             .flat_map(|(id, seg, _)| {
-                seg.bend_handles()
+                let portions: Vec<_> = match seg.connector_type {
+                    ConnectorType::Bent => seg
+                        .elbow_points()
+                        .windows(2)
+                        .enumerate()
+                        .filter_map(|(i, pair)| {
+                            let length = (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]);
+                            (length * zoom >= 16.0).then_some((
+                                i,
+                                [
+                                    (pair[0][0] + pair[1][0]) / 2.0,
+                                    (pair[0][1] + pair[1][1]) / 2.0,
+                                ],
+                                true,
+                                connector_edit::horizontal(pair[0], pair[1]),
+                            ))
+                        })
+                        .collect(),
+                    ConnectorType::Curved => vec![(0, seg.bend_handle(), false, false)],
+                    ConnectorType::Straight => vec![],
+                };
+                portions
                     .into_iter()
-                    .enumerate()
-                    .map(|(index, p)| {
+                    .map(|(index, p, portion, horizontal)| {
                         div()
                             .id(("wb-bend-handle", index))
                             .debug_selector(move || {
-                                if index == 0 {
-                                    "arrow-bend-handle".into()
+                                if portion {
+                                    format!("connector-portion-{index}")
                                 } else {
-                                    format!("arrow-bend-handle-{index}")
+                                    "arrow-bend-handle".into()
                                 }
                             })
                             .absolute()
@@ -6433,15 +6639,25 @@ impl Render for WhiteboardView {
                             .bg(panel_strong)
                             .border_2()
                             .border_color(selection)
-                            .cursor(CursorStyle::Crosshair)
-                            .tooltip(self.tip("Drag to reshape · double-click to remove this fold"))
+                            .cursor(if !portion {
+                                CursorStyle::Crosshair
+                            } else if horizontal {
+                                CursorStyle::ResizeUpDown
+                            } else {
+                                CursorStyle::ResizeLeftRight
+                            })
+                            .tooltip(self.tip(if portion {
+                                "Drag this portion; end portions add folds automatically"
+                            } else {
+                                "Drag to reshape curve"
+                            }))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                                     cx.stop_propagation();
                                     this.focus.focus(window, cx);
-                                    if ev.click_count >= 2 {
-                                        this.remove_arrow_bend(id, index, window, cx);
+                                    if portion {
+                                        this.begin_portion_drag(id, index, ev.position, window, cx);
                                     } else {
                                         this.push_undo();
                                         this.arrow_bend_drag = Some((id, index));
@@ -6521,24 +6737,6 @@ impl Render for WhiteboardView {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.set_connector_type(id, ConnectorType::Curved, window, cx)
                     })),
-                )
-                .child(
-                    head_button("arrow-add-bend", "+ 折り目", seg.manual_bends().len() < 33)
-                        .tooltip(self.tip("Add another draggable fold (up to 33 handles)"))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.add_arrow_bend(id, window, cx)
-                        })),
-                )
-                .child(
-                    head_button("arrow-remove-bend", "− 折り目", seg.has_manual_bends())
-                        .tooltip(
-                            self.tip("Remove last fold; double-click a handle to remove that fold"),
-                        )
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            if seg.has_manual_bends() {
-                                this.remove_arrow_bend(id, seg.bend_handles().len() - 1, window, cx)
-                            }
-                        })),
                 )
                 .child(
                     head_button(
@@ -6756,6 +6954,17 @@ impl Render for WhiteboardView {
                                 cx.notify();
                             }),
                         )
+                        .into_any_element(),
+                );
+                cats.push(
+                    tool_btn(Tool::Frame)
+                        .debug_selector(|| "frame-tool".into())
+                        .tooltip(self.tip(Tool::Frame.label()))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.commit_text(window, cx);
+                            this.focus.focus(window, cx);
+                            this.set_tool(Tool::Frame, cx);
+                        }))
                         .into_any_element(),
                 );
             }
@@ -7490,7 +7699,7 @@ impl Render for WhiteboardView {
                             )));
                 }
                 // Paste shows whenever the host wired it (so it works on empty canvas).
-                if self.on_paste.is_some() {
+                if self.on_paste.is_some() || self.on_paste_image.is_some() {
                     panel = panel.child(row("wb-ctx-paste", "Paste", "⌘V").on_click(
                         cx.listener(|this, _ev, window, cx| this.paste_from_menu(window, cx)),
                     ));
@@ -8418,6 +8627,7 @@ mod tests {
                         end_anchor: None,
                         bend: None,
                         extra_bends: None,
+                        manual_polyline: false,
                         heads: None,
                         connector_type: ConnectorType::Bent,
                         auto_route: true,
@@ -8669,6 +8879,7 @@ mod tests {
             end_anchor: None,
             bend: None,
             extra_bends: None,
+            manual_polyline: false,
             heads: None,
             connector_type: ConnectorType::Bent,
             auto_route: true,
@@ -8869,6 +9080,7 @@ mod tests {
             end_anchor: None,
             bend: None,
             extra_bends: None,
+            manual_polyline: false,
             heads: None,
             connector_type: ConnectorType::Bent,
             auto_route: true,
