@@ -92,7 +92,7 @@ impl Status {
     }
 }
 
-struct RootView {
+pub(crate) struct RootView {
     board: Entity<WhiteboardView>,
     theme: ThemeHandle,
 }
@@ -106,8 +106,9 @@ impl RootView {
 
 impl Render for RootView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let kind = self.theme.get();
         let chrome = Chrome {
-            palette: theme::palette(self.theme.get()),
+            palette: theme::palette(kind),
             status: cx.global::<NearApp>().status.clone(),
         };
         ui::render(&chrome, self.board.clone())
@@ -462,15 +463,34 @@ pub(crate) fn main() {
                 ..Default::default()
             },
             move |window, cx| {
+                window.set_window_title("nottio");
                 let handle = window.window_handle();
                 cx.global_mut::<NearApp>().window = Some(handle);
-                cx.new(|cx| {
+                let root = cx.new(|cx| {
                     let board = cx.new(|cx| build_board(scene, theme.clone(), &ui, cx));
                     RootView {
                         board,
                         theme: theme.clone(),
                     }
-                })
+                });
+                let weak = root.downgrade();
+                // Closing immediately after an edit must not race the debounce.
+                window.on_window_should_close(cx, move |_window, cx| {
+                    let Some(root) = weak.upgrade() else {
+                        return true;
+                    };
+                    let json = root.read(cx).board.read(cx).scene().to_json();
+                    let path = cx.global::<NearApp>().board_path.clone();
+                    match storage::write_board(&path, &json) {
+                        Ok(()) => true,
+                        Err(error) => {
+                            cx.global_mut::<NearApp>().status = Status::Failed(error.to_string());
+                            root.update(cx, |_, cx| cx.notify());
+                            false
+                        }
+                    }
+                });
+                root
             },
         )
         .expect("could not open the nottio window");

@@ -6,9 +6,7 @@ description = "FigJam-like sticky board for Windows: paste notes, draw shapes, c
 publish = false
 
 [dependencies]
-# GPUI ships on crates.io as the `gpui-pre` snapshot family (weekly snapshots of
-# zed; each version = one zed sha). Zed stopped publishing the plain `gpui` crate
-# (0.2.2 was the last one, 2025-10-22), so this is the current path.
+# This app uses the `gpui-pre` snapshot family required by gpui-whiteboard.
 #
 # Every gpui-pre release is a DIFFERENT zed snapshot, so the app and every gpui
 # crate in the tree must resolve to the SAME version (one gpui graph). Keep the
@@ -16,7 +14,12 @@ publish = false
 # gpui-whiteboard 0.5.1 requires `gpui-pre` 0.3 -> 0.3.9 is the shared target.
 gpui = { package = "gpui-pre", version = "=0.3.9" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9" }
-gpui-whiteboard = "=0.5.1"
+gpui-whiteboard = { path = "vendor/gpui-whiteboard" }
+serde_json = "1"
+
+[workspace]
+members = ["vendor/gpui-whiteboard"]
+default-members = [".", "vendor/gpui-whiteboard"]
 
 [profile.release]
 lto = "thin"

@@ -16,6 +16,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Directory holding the working board and the small UI state alongside it.
 pub fn data_dir() -> PathBuf {
+    // Allows isolated smoke tests and portable boards without touching APPDATA.
+    if let Some(path) = std::env::var_os("NOTTIO_DATA_DIR") {
+        return PathBuf::from(path);
+    }
     let base = std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);

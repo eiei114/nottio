@@ -9,7 +9,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui::{div, prelude::*, px, rgb, Entity, Hsla, SharedString};
+use gpui::{div, prelude::*, px, rgba, Entity, Hsla, SharedString};
 use gpui_whiteboard::{WhiteboardStyleFn, WhiteboardView};
 
 use crate::app::Status;
@@ -53,41 +53,52 @@ pub struct Chrome {
     pub status: Status,
 }
 
-pub fn render(chrome: &Chrome, board: Entity<WhiteboardView>) -> impl IntoElement {
+/// Lay out the status strip and board. Tools live in the board's own toolbar.
+pub fn render(chrome: &Chrome, board: Entity<WhiteboardView>) -> gpui::Stateful<gpui::Div> {
     let palette = chrome.palette;
     let label = chrome.status.label();
     let color: Hsla = if chrome.status.is_error() {
-        rgb(palette.danger).into()
+        rgba(palette.danger).into()
     } else {
-        rgb(palette.text).into()
+        rgba(palette.text).into()
     };
     // An always-present strip, empty when there is nothing to report, so the
     // canvas never shifts up and down as saves land.
     let strip = div()
         .flex()
         .items_center()
-        .h(px(26.))
+        .gap_3()
+        .h(px(30.))
         .flex_none()
         .px_3()
-        .bg(rgb(palette.panel_strong))
+        .bg(rgba(palette.panel_strong))
         .border_b_1()
-        .border_color(rgb(palette.border))
+        .border_color(rgba(palette.border))
         .text_xs()
         .whitespace_nowrap()
-        .text_color(color)
-        .child(SharedString::from(label));
+        .child(
+            div()
+                .flex_none()
+                .text_color(color)
+                .child(SharedString::from(label)),
+        )
+        .child(div().flex_1());
 
+    // The id makes the root a stateful element so the caller can attach
+    // `on_key_down` to it — keys the board does not consume bubble up to here.
     div()
+        .id("nottio-root")
         .flex()
         .flex_col()
         .size_full()
-        .bg(rgb(palette.bg))
+        .bg(rgba(palette.bg))
         .child(strip)
         .child(
             div()
                 .flex_1()
                 .flex_basis(px(0.))
                 .overflow_hidden()
+                .relative()
                 .child(board),
         )
 }

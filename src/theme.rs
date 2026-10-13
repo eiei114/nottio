@@ -4,7 +4,7 @@
 //! theme lives in one `Copy` struct that `app.rs` can snapshot for the closure
 //! and `ui.rs` can use for its own chrome.
 
-use gpui::{rgb, Hsla, Rgba};
+use gpui::{rgba, Hsla};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThemeKind {
@@ -91,10 +91,6 @@ pub fn palette(kind: ThemeKind) -> Palette {
     }
 }
 
-fn rgba(hex: u32) -> Rgba {
-    rgb(hex)
-}
-
 /// `WhiteboardStyle` takes `Hsla`, so the palette crosses over here.
 pub fn style(kind: ThemeKind) -> gpui_whiteboard::WhiteboardStyle {
     let p = palette(kind);
@@ -118,6 +114,16 @@ pub fn style(kind: ThemeKind) -> gpui_whiteboard::WhiteboardStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn packed_palette_keeps_rgb_channels_and_alpha() {
+        let color = rgba(LIGHT.bg);
+        assert_eq!(color.r, 247.0 / 255.0);
+        assert_eq!(color.g, 247.0 / 255.0);
+        assert_eq!(color.b, 245.0 / 255.0);
+        assert_eq!(color.a, 1.0);
+        assert_eq!(rgba(LIGHT.panel).a, 242.0 / 255.0);
+    }
 
     #[test]
     fn toggling_a_theme_returns_the_other_one() {
