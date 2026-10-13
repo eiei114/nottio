@@ -1,3 +1,10 @@
 /target
 __pycache__/
 *.pyc
+# Personal working data and local credentials do not belong in the public repo.
+/board.json
+/ui-state.json
+/backups/
+.env
+.env.*
+!.env.example

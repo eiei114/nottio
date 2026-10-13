@@ -1,12 +1,16 @@
-# nottio
+<p align="center">
+  <img src="assets/nottio.png" alt="nottio blue folded-ribbon app icon" width="128" height="128">
+</p>
+
+<h1 align="center">nottio</h1>
+
+<p align="center">A local-first whiteboard for Windows — stickies, shapes, images, and connected ideas.</p>
 
 FigJam-shaped sticky board for Windows. Drop notes on an infinite canvas, draw
 shapes, connect them with arrows, and it saves itself.
 
 Built on [GPUI](https://gpui.rs) (the UI framework behind Zed) via
 [gpui-whiteboard](https://crates.io/crates/gpui-whiteboard).
-
-<img src="assets/nottio.png" alt="nottio blue folded-ribbon icon" width="128">
 
 ## Status
 
@@ -72,6 +76,8 @@ FigJam replacement or a production-hardened release.
 ## Running it
 
 ```sh
+git clone https://github.com/eiei114/nottio.git
+cd nottio
 cargo run            # development
 cargo build --release
 ```
@@ -220,3 +226,9 @@ and licensing. Unpatched upstream 0.5.1 cannot read the new `sticky` variant.
 Project terms and boundaries live in [context](docs/context.md); adopted user
 requirements are recorded under `docs/decisions/`. The [FigJam reference](docs/figjam-connector-reference.md)
 lists official behavior and the supported subset; this is not an exact clone.
+
+## Third-party notices
+
+The vendored whiteboard retains its [MIT license](vendor/gpui-whiteboard/LICENSE),
+the bundled icons retain their [license](vendor/gpui-whiteboard/assets/icons/LICENSE),
+and JetBrains Mono retains its [SIL Open Font License](vendor/gpui-whiteboard/assets/JetBrainsMono-OFL.txt).

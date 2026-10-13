@@ -4,6 +4,11 @@ Local Windows GPUI board prototype, developed in the Production/nottio repositor
 Source: current user conversation. This folder is the implementation boundary;
 there is no server, account system, collaboration service or web frontend.
 
+Public source repository: https://github.com/eiei114/nottio (default branch `main`).
+Source publication does not publish a user's working board or UI state. Those
+remain local; root-level portable board files, backups and local env files are
+ignored by Git. No packaged binary release or installer is implied.
+
 ## Vocabulary
 
 - **Sticky**: a first-class `ElementKind::Sticky` object, not an ordinary shape.
